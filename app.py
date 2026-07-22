@@ -26,11 +26,11 @@ FORMULES_REF = {
     13: '=SI(INDEX($W2:$DK2;;EQUIV("Montant_ST";$W$1:$DK$1,0))<0,99;"Supprimer";"")',
     14: '=SI(MAX.SI.ENS(INDEX($O$2:$DK$9931;;EQUIV("Rabais entre 2 date";$O$1:$DK$1,0));INDEX($O$2:$DK$9931;;EQUIV("Clé_unique_détail_commande";$O$1:$DK$1,0));INDEX($O2:$DK2;;EQUIV("Clé_unique_détail_commande";$O$1:$DK$1,0)))=P2;1;0)',
     15: '=INDEX($W2:$DK2;;EQUIV("Qté_commandée";$W$1:$DK$1,0))*INDEX($W2:$DK2;;EQUIV("Montant_ST";$W$1:$DK$1,0))',
-    16: '=LET( prod;INDEX($W2:$DK2;;EQUIV("No_Produit";$W$1:$DK$1,0)); df;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0)); tol;R2; qte;INDEX($W2:$DK2;;EQUIV("Qté_commandée";$W$1:$DK$1,0));B,\'Rabais entre 2 dates\'!$B$2:$B$20000; H,\'Rabais entre 2 dates\'!$H$2:$H$20000; I,\'Rabais entre 2 dates\'!$I$2:$I$20000; J,\'Rabais entre 2 dates\'!$J$2:$J$20000;crit;(B=prod)*(H<=df+tol)*(I>=df-tol);Hf;FILTRE(H;crit); If;FILTRE(I;crit); Jf;FILTRE(J;crit);dH;ABS(Hf-df); dI;ABS(If-df);dist;(dH+dI-ABS(dH-dI))/2;rab;INDEX(TRIERPAR(Jf;dist;1;Hf;-1);1);SIERREUR(rab*qte;0) )',
+    16: '=LET(prod;INDEX($W2:$DK2;;EQUIV("No_Produit";$W$1:$DK$1,0));df;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0));tol;R2;qte;INDEX($W2:$DK2;;EQUIV("Qté_commandée";$W$1:$DK$1,0));B,\'Rabais entre 2 dates\'!$B$2:$B$20000;H,\'Rabais entre 2 dates\'!$H$2:$H$20000;I,\'Rabais entre 2 dates\'!$I$2:$I$20000;J,\'Rabais entre 2 dates\'!$J$2:$J$20000;crit;(B=prod)*(H<=df+tol)*(I>=df-tol);Hf;FILTRE(H;crit);If;FILTRE(I;crit);Jf;FILTRE(J;crit);dH;ABS(Hf-df);dI;ABS(If-df);dist;(dH+dI-ABS(dH-dI))/2;rab;INDEX(TRIERPAR(Jf;dist;1;Hf;-1);1);SIERREUR(rab*qte;0))',
     17: '=SI(OU(S2="";T2="");0;SI(ET(INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0))>=S2;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0))<=T2);0;1))',
     18: '=R1',
-    19: '=SIERREUR(LET( prod;INDEX($W2:$DK2;;EQUIV("No_Produit";$W$1:$DK$1,0)); df;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0)); tol;R2;B,\'Rabais entre 2 dates\'!$B$2:$B$20000; H,\'Rabais entre 2 dates\'!$H$2:$H$20000; I,\'Rabais entre 2 dates\'!$I$2:$I$20000;crit;(B=prod)*(H<=df+tol)*(I>=df-tol);Hf;FILTRE(H;crit); If;FILTRE(I;crit);dH;ABS(Hf-df); dI;ABS(If-df); dist;(dH+dI-ABS(dH-dI))/2;INDEX(TRIERPAR(Hf;dist;1;Hf;-1);1) ),"")',
-    20: '=SIERREUR(LET( prod;INDEX($W2:$DK2;;EQUIV("No_Produit";$W$1:$DK$1,0)); df;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0)); tol;R2;B,\'Rabais entre 2 dates\'!$B$2:$B$20000; H,\'Rabais entre 2 dates\'!$H$2:$H$20000; I,\'Rabais entre 2 dates\'!$I$2:$I$20000;crit;(B=prod)*(H<=df+tol)*(I>=df-tol);Hf;FILTRE(H;crit); If;FILTRE(I;crit);dH;ABS(Hf-df); dI;ABS(If-df); dist;(dH+dI-ABS(dH-dI))/2;INDEX(TRIERPAR(If;dist;1;Hf;-1);1) ),"")',
+    19: '=SIERREUR(LET(prod;INDEX($W2:$DK2;;EQUIV("No_Produit";$W$1:$DK$1,0));df;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0));tol;R2;B,\'Rabais entre 2 dates\'!$B$2:$B$20000;H,\'Rabais entre 2 dates\'!$H$2:$H$20000;I,\'Rabais entre 2 dates\'!$I$2:$I$20000;crit;(B=prod)*(H<=df+tol)*(I>=df-tol);Hf;FILTRE(H;crit);If;FILTRE(I;crit);dH;ABS(Hf-df);dI;ABS(If-df);dist;(dH+dI-ABS(dH-dI))/2;INDEX(TRIERPAR(Hf;dist;1;Hf;-1);1)),"")',
+    20: '=SIERREUR(LET(prod;INDEX($W2:$DK2;;EQUIV("No_Produit";$W$1:$DK$1,0));df;INDEX($W2:$DK2;;EQUIV("Date_Facture";$W$1:$DK$1,0));tol;R2;B,\'Rabais entre 2 dates\'!$B$2:$B$20000;H,\'Rabais entre 2 dates\'!$H$2:$H$20000;I,\'Rabais entre 2 dates\'!$I$2:$I$20000;crit;(B=prod)*(H<=df+tol)*(I>=df-tol);Hf;FILTRE(H;crit);If;FILTRE(I;crit);dH;ABS(Hf-df);dI;ABS(If-df);dist;(dH+dI-ABS(dH-dI))/2;INDEX(TRIERPAR(If;dist;1;Hf;-1);1)),"")',
     21: '=SIERREUR(RECHERCHEX(S2&T2&AB2;\'Rabais entre 2 dates\'!$H$2:$H$20000&\'Rabais entre 2 dates\'!$I$2:$I$20000&\'Rabais entre 2 dates\'!$B$2:$B$20000;\'Rabais entre 2 dates\'!$L$2:$L$20000;""),"")',
     22: '=O2-P2'
 }
@@ -39,7 +39,7 @@ FORMULES_REF = {
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info("Traitement en cours... Injection de vos formules d'origine et propagation dynamique.")
+    st.info("Traitement en cours... Injection de vos formules et propagation dynamique.")
     
     try:
         # Chargement du fichier téléversé
@@ -52,7 +52,6 @@ if fichier_upload is not None:
             def adapt_formula(f_str, r):
                 if not f_str.startswith('='):
                     return f_str
-                # Remplace les numéros de ligne relatifs (ex: B2 -> Br, O2 -> Or, etc.) tout en préservant les absolus $
                 pattern = r'([A-Z]+)(\$?)(2)\b'
                 def repl(m):
                     col, dollar, row_num = m.groups()
@@ -67,7 +66,7 @@ if fichier_upload is not None:
                     else:
                         ws.cell(row=r, column=c).value = None
 
-            # Sauvegarde en mémoire du fichier final
+            # Sauvegarde en mémoire du fichier final avec prise en charge du recalcul complet
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
             output_buffer.seek(0)
