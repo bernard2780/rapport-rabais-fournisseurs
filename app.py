@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement rigoureux par noms de colonnes (Version {st.session_state.version_compteur}) en cours...")
+    st.info(f"Traitement rigoureux en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -34,14 +34,18 @@ if fichier_upload is not None:
             df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
             df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
             
-            # Normalisation stricte des en-têtes (suppression des espaces superflus)
-            df_cmd.columns = [str(c).strip() for c in df_cmd.columns]
-            df_rabais.columns = [str(c).strip() for c in df_rabais.columns]
+            # --- NETTOYAGE UNIVERSEL DES EN-TÊTES (Supprime BOM, espaces insécables, etc.) ---
+            def clean_col_name(c):
+                if pd.isna(c): return ""
+                return str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip()
+
+            df_cmd.columns = [clean_col_name(c) for c in df_cmd.columns]
+            df_rabais.columns = [clean_col_name(c) for c in df_rabais.columns]
             
             max_row = ws_cmd.max_row
             tolerance = 10
             
-            # --- RECHERCHE SÉCURISÉE PAR NOM DE COLONNE ---
+            # --- RECHERCHE FLEXIBLE ET SÉCURISÉE ---
             def trouver_colonne(mots_cles):
                 for col in df_cmd.columns:
                     col_lower = col.lower()
@@ -49,21 +53,17 @@ if fichier_upload is not None:
                         return col
                 return None
 
-            col_cle_cmd = trouver_colonne(['clé', 'unique', 'détail', 'commande']) or trouver_colonne(['clé', 'commande'])
-            col_produit = trouver_colonne(['no', 'produit']) or trouver_colonne(['produit'])
-            col_qte = trouver_colonne(['qté', 'commandée']) or trouver_colonne(['qte'])
-            col_montant = trouver_colonne(['montant', 'st'])
+            # Recherche par mots-clés indépendante de la casse et des caractères invisibles
+            col_cle_cmd = trouver_colonne(['clé_unique', 'commande']) or trouver_colonne(['clé', 'commande']) or df_cmd.columns[2]
+            col_produit = trouver_colonne(['produit']) or df_cmd.columns[1]
+            col_qte = trouver_colonne(['qté', 'commandée']) or trouver_colonne(['qte']) or df_cmd.columns[4]
+            col_montant = trouver_colonne(['montant', 'st']) or df_cmd.columns[5]
             col_date_fact = trouver_colonne(['date', 'facture'])
-            col_date_recl = trouver_colonne(['date', 'réclamée']) or trouver_colonne(['réclamée'])
-            col_cle_fact = trouver_colonne(['clé', 'unique', 'détail', 'facture']) or trouver_colonne(['clé', 'facture'])
-            col_cred = trouver_colonne(['crédit', 'clé'])
+            col_date_recl = trouver_colonne(['réclamée']) or trouver_colonne(['reclamée'])
+            col_cle_fact = trouver_colonne(['facture'])
+            col_cred = trouver_colonne(['crédit', 'clé']) or trouver_colonne(['credit'])
             col_date_recl_cred = trouver_colonne(['crédit', 'date'])
             col_promo_ligne = trouver_colonne(['code', 'promotion']) or trouver_colonne(['promotion'])
-
-            # Vérification des colonnes obligatoires critiques
-            if not col_cle_cmd or not col_produit or not col_qte or not col_montant:
-                st.error(f"Colonnes introuvables. Vérifiez les en-têtes dans votre fichier Excel. (Détectées: Clé={col_cle_cmd}, Produit={col_produit}, Qte={col_qte}, Montant={col_montant})")
-                st.stop()
 
             # Nettoyage des types numériques et dates
             df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0)
@@ -276,7 +276,7 @@ if fichier_upload is not None:
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement par nom de colonnes terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
