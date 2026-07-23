@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement rigoureux et complet (Version {st.session_state.version_compteur}) en cours...")
+    st.info(f"Traitement rigoureux et instantané (Version {st.session_state.version_compteur}) en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -58,13 +58,14 @@ if fichier_upload is not None:
             col_cred = trouve_col(['crédit', 'clé'], None)
             col_date_recl_cred = trouve_col(['crédit', 'date'], None)
             
-            col_promo = None
+            # Détection exacte de Code_de_Promotion pour la colonne L
+            col_promo_ligne = None
             for candidate in ['Code_de_Promotion', 'Code_promotion', 'Code promotion', 'Code de Promotion']:
                 if candidate in df_cmd.columns:
-                    col_promo = candidate
+                    col_promo_ligne = candidate
                     break
-            if not col_promo:
-                col_promo = next((c for c in df_cmd.columns if 'promo' in str(c).lower()), None)
+            if not col_promo_ligne:
+                col_promo_ligne = next((c for c in df_cmd.columns if 'promo' in str(c).lower()), None)
 
             # Nettoyage des types numériques et dates
             df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0)
@@ -116,7 +117,7 @@ if fichier_upload is not None:
                 col_n_arr[group[group['_rabais_calc'] == max_r].index] = 1
             df_cmd['_col_N'] = col_n_arr
 
-            # --- 3. INDEXATION RECHERCHEX ---
+            # --- 3. INDEXATION RECHERCHEX POUR COLONNE U ---
             h_col = df_rabais.columns[7] if len(df_rabais.columns) > 7 else debut_col
             i_col = df_rabais.columns[8] if len(df_rabais.columns) > 8 else fin_col
             b_col = df_rabais.columns[1] if len(df_rabais.columns) > 1 else prod_col_rab
@@ -131,7 +132,7 @@ if fichier_upload is not None:
                 if pd.notnull(val_h) and pd.notnull(val_i):
                     rabais_lookup[f"{val_h.strftime('%Y-%m-%d')}{val_i.strftime('%Y-%m-%d')}{val_b}"] = val_l
 
-            # --- 4. ENSEMBLES ET PRÉ-CALCULS POUR COLONNES I et J ---
+            # --- 4. ENSEMBLES ET PRÉ-CALCULS POUR RÈGLES (I, J, K) ---
             series_date_recl = df_cmd[col_date_recl] if col_date_recl and col_date_recl in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_reclamees = set(df_cmd[series_date_recl.notnull() & (series_date_recl.astype(str).str.strip() != '') & (series_date_recl.astype(str) != 'NaT')][col_cle_cmd].dropna().astype(str))
             
@@ -141,19 +142,35 @@ if fichier_upload is not None:
             series_cred = df_cmd[col_cred] if col_cred and col_cred in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_credite = set(series_cred.dropna().astype(str))
 
-            # Pré-calculs pour Col I (Supprimer #6)
+            # Pré-calculs Col I (Supprimer #6)
             is_no_recl_mask = series_date_recl.isnull() | (series_date_recl.astype(str).str.strip() == "") | (series_date_recl.astype(str) == "NaT")
             df_cmd['_temp_i_rab'] = np.where(is_no_recl_mask, df_cmd['_rabais_calc'], -np.inf)
             group_i_keys = [col_cle_cmd, col_produit]
             max_rab_i_group = df_cmd.groupby(group_i_keys)['_temp_i_rab'].transform('max')
             sum_qte_i_group = df_cmd.groupby(group_i_keys)['__qte_num'].transform('sum')
 
-            # Pré-calculs pour Col J (Supprimer #7)
+            # Pré-calculs Col J (Supprimer #7)
             max_fact_n1_filled = pd.Series(np.nan, index=df_cmd.index)
             if col_cle_fact and col_cle_fact in df_cmd.columns:
                 n1_mask = df_cmd['_col_N'] == 1
                 df_cmd['_max_fact_n1'] = np.where(n1_mask, df_cmd[col_cle_fact], np.nan)
                 max_fact_n1_filled = df_cmd.groupby(col_cle_cmd)['_max_fact_n1'].transform('max')
+
+            # Pré-calculs Col K (Supprimer #8)
+            group_k_keys = [col_cle_cmd, col_produit]
+            sum_qte_k_group = df_cmd.groupby(group_k_keys)['__qte_num'].transform('sum')
+            
+            has_date_rc = pd.Series(False, index=df_cmd.index)
+            if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
+                d_col = df_cmd[col_date_recl_cred]
+                has_date_rc = d_col.notnull() & (d_col.astype(str).str.strip() != "") & (d_col.astype(str) != "NaT") & (d_col.astype(str) != "nan")
+            group_has_date_rc = has_date_rc.groupby(group_k_keys).transform('any')
+
+            has_valid_cred = pd.Series(False, index=df_cmd.index)
+            if col_cred and col_cred in df_cmd.columns:
+                c_col = df_cmd[col_cred]
+                has_valid_cred = c_col.notnull() & (c_col.astype(str).str.strip() != "") & (c_col.astype(str) != "0") & (c_col.astype(str) != "nan")
+            group_cred_count = has_valid_cred.groupby(group_k_keys).transform('sum')
 
             # --- 5. ÉCRITURE DANS OPENPYXL ---
             for r in range(2, max_row + 1):
@@ -167,8 +184,16 @@ if fichier_upload is not None:
                     d_t = date_fin_arr[idx]
                     val_ab = str(row.get(col_produit, '')).strip()
                     
+                    # Col U : RECHERCHEX S2&T2&AB2
                     code_promo_val = rabais_lookup.get(f"{d_s}{d_t}{val_ab}", "") if (d_s and d_t) else ""
                     code_promo_str = str(code_promo_val).strip() if pd.notnull(code_promo_val) else ""
+
+                    # Col L : Code_de_Promotion de la ligne (pour CHERCHE("FIL", ...)=1)
+                    promo_ligne_val = ""
+                    if col_promo_ligne and col_promo_ligne in df_cmd.columns:
+                        raw_pl = row.get(col_promo_ligne, '')
+                        if pd.notnull(raw_pl) and str(raw_pl).strip().lower() != 'nan':
+                            promo_ligne_val = str(raw_pl).strip()
 
                     cle_cmd = str(row.get(col_cle_cmd, ''))
                     if cle_cmd == 'nan' or not cle_cmd: cle_cmd = ""
@@ -217,11 +242,17 @@ if fichier_upload is not None:
                         if col_cle_fact and pd.notnull(row.get(col_cle_fact)) and pd.notnull(m_f) and row.get(col_cle_fact) < m_f:
                             suppr_7 = "Supprimer"
 
-                    # Règle 8 / Col K
+                    # --- COLONNE K (Supprimer #8) ---
                     suppr_8 = ""
+                    cond1_k = (sum_qte_k_group.iloc[idx] > 0)
+                    cond2_k = group_has_date_rc.iloc[idx]
+                    cond3_k = (group_cred_count.iloc[idx] == 0)
+                    cond4_k = (montant_st < 0.99)
+                    if cond1_k and cond2_k and cond3_k and cond4_k:
+                        suppr_8 = "Supprimer"
 
-                    # Règle 9 / Col L
-                    suppr_9 = "Supprimer" if code_promo_str.upper().startswith("FIL") else ""
+                    # --- COLONNE L (Supprimer #9 - Code commence par "FIL") ---
+                    suppr_9 = "Supprimer" if promo_ligne_val.upper().startswith("FIL") else ""
 
                     # Règle 10 / Col M
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
@@ -266,7 +297,7 @@ if fichier_upload is not None:
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement complet et terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
