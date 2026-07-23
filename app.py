@@ -4,14 +4,17 @@ import openpyxl
 import io
 import numpy as np
 import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# Fonction pour normaliser les textes (supprime les accents et met en minuscules pour éviter tout conflit)
 def normaliser(texte):
     if pd.isna(texte):
         return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(texte)) if unicodedata.category(c) != 'Mn').lower().replace('_', ' ').strip()
+
+def similarite(a, b):
+    return SequenceMatcher(None, normaliser(a), normaliser(b)).ratio()
 
 # 1. CONFIGURATION DE LA PAGE WEB
 st.set_page_config(page_title="Générateur de Rapport", layout="wide")
@@ -30,7 +33,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement rigoureux en cours...")
+    st.info(f"Traitement intelligent avec tolérance de correspondance en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -39,43 +42,55 @@ if fichier_upload is not None:
             ws_cmd = wb['Rabais fournisseurs']
             
             df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
-            df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
+            df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais оснастка')
             
-            # Nettoyage des en-têtes
             df_cmd.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_cmd.columns]
             df_rabais.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_rabais.columns]
             
             max_row = ws_cmd.max_row
             tolerance = 10
             
-            # --- RECHERCHE INTELLIGENTE INVARIABLE AUX ACCENTS ---
-            def trouver_colonne(mots_cles):
+            # --- CORRESPONDANCE INTELLIGENTE PAR SIMILARITÉ (SEUIL 85% / 98%) ---
+            def trouver_colonne_flexible(mots_cles_cibles, seuil=0.75):
+                meilleure_col = None
+                meilleur_score = 0.0
+                cible_str = " ".join(mots_cles_cibles)
                 for col in df_cmd.columns:
+                    # Test par similarité globale
+                    score = similarite(col, cible_str)
+                    # Test si tous les mots clés sont contenus
                     col_norm = normaliser(col)
-                    if all(normaliser(m) in col_norm for m in mots_cles):
-                        return col
+                    if all(normaliser(m) in col_norm for m in mots_cles_cibles):
+                        score = max(score, 0.95)
+                    
+                    if score > meilleur_score:
+                        meilleur_score = score
+                        meilleure_col = col
+                
+                if meilleur_score >= seuil:
+                    return meilleure_col
                 return None
 
-            # Recherche insensible aux accents (ex: "cle" ou "clé" fonctionnera de la même manière)
-            col_cle_cmd = trouver_colonne(['cle', 'commande']) or df_cmd.columns[2]
-            col_produit = trouver_colonne(['produit']) or df_cmd.columns[1]
-            col_qte = trouver_colonne(['qte']) or trouver_colonne(['quantite']) or df_cmd.columns[4]
-            col_montant = trouver_colonne(['montant', 'st']) or df_cmd.columns[5]
-            col_date_fact = trouver_colonne(['date', 'facture'])
-            col_date_recl = trouver_colonne(['reclamée']) or trouver_colonne(['reklamee'])
-            col_cle_fact = trouver_colonne(['facture'])
-            col_cred = trouver_colonne(['credit', 'cle'])
-            col_date_recl_cred = trouver_colonne(['credit', 'date'])
-            col_promo_ligne = trouver_colonne(['promotion']) or trouver_colonne(['promo'])
+            # Recherche intelligente et tolérante
+            col_cle_cmd = trouver_colonne_flexible(['cle', 'unique', 'detail', 'commande']) or trouver_colonne_flexible(['cle', 'commande'])
+            col_produit = trouver_colonne_flexible(['produit'])
+            col_qte = trouver_colonne_flexible(['qte', 'commandee']) or trouver_colonne_flexible(['qte'])
+            col_montant = trouver_colonne_flexible(['montant', 'st'])
+            col_date_fact = trouver_colonne_flexible(['date', 'facture'])
+            col_date_recl = trouver_colonne_flexible(['reclamée']) or trouver_colonne_flexible(['reclamée'])
+            col_cle_fact = trouver_colonne_flexible(['facture'])
+            col_cred = trouver_colonne_flexible(['credit', 'cle'])
+            col_date_recl_cred = trouver_colonne_flexible(['credit', 'date'])
+            col_promo_ligne = trouver_colonne_flexible(['promotion']) or trouver_colonne_flexible(['promo'])
 
-            # Sécurité : si la clé commande ne se trouve vraiment pas, affichage des colonnes lues
-            if not col_cle_cmd or col_cle_cmd not in df_cmd.columns:
-                st.error(f"Impossible de lier la colonne de commande. Voici les colonnes exactes lues dans votre fichier :\n\n {list(df_cmd.columns)}")
+            # Si malgré la similarité la colonne est introuvable, on affiche un message clair avec les colonnes dispos
+            if not col_cle_cmd:
+                st.error(f"Impossible de faire correspondre la clé de commande. Colonnes disponibles dans le fichier : {list(df_cmd.columns)}")
                 st.stop()
 
             # Nettoyage des types numériques et dates
-            df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0)
-            df_cmd['__montant_num'] = pd.to_numeric(df_cmd[col_montant], errors='coerce').fillna(0)
+            df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0) if col_qte else 0
+            df_cmd['__montant_num'] = pd.to_numeric(df_cmd[col_montant], errors='coerce').fillna(0) if col_montant else 0
             
             if col_date_fact and col_date_fact in df_cmd.columns:
                 df_cmd['__date_f'] = pd.to_datetime(df_cmd[col_date_fact], errors='coerce')
@@ -84,9 +99,9 @@ if fichier_upload is not None:
 
             # --- 1. CALCUL DES RABAIS ENTRE 2 DATES ---
             prod_col_rab = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
-            debut_col = next((c for c in df_rabais.columns if 'début' in c.lower() or 'debut' in c.lower()), df_rabais.columns[7])
-            fin_col = next((c for c in df_rabais.columns if 'échéance' in c.lower() or 'echeance' in c.lower() or 'fin' in c.lower()), df_rabais.columns[8])
-            rabais_col = next((c for c in df_rabais.columns if 'rabais' in c.lower()), df_rabais.columns[11])
+            debut_col = next((c for c in df_rabais.columns if 'debut' in normaliser(c)), df_rabais.columns[7])
+            fin_col = next((c for c in df_rabais.columns if 'echeance' in normaliser(c) or 'fin' in normaliser(c)), df_rabais.columns[8])
+            rabais_col = next((c for c in df_rabais.columns if 'rabais' in normaliser(c)), df_rabais.columns[11])
             
             df_rabais[debut_col] = pd.to_datetime(df_rabais[debut_col], errors='coerce')
             df_rabais[fin_col] = pd.to_datetime(df_rabais[fin_col], errors='coerce')
@@ -97,7 +112,7 @@ if fichier_upload is not None:
             date_fin_arr = [''] * len(df_cmd)
             
             for idx, row in df_cmd.iterrows():
-                prod = row.get(col_produit, None)
+                prod = row.get(col_produit, None) if col_produit else None
                 df_date = row.get('__date_f', pd.NaT)
                 qte = row.get('__qte_num', 0)
                 
@@ -125,7 +140,7 @@ if fichier_upload is not None:
             df_cmd['_col_N'] = col_n_arr
 
             # --- 3. INDEXATION RECHERCHEX (POUR COLONNE U) ---
-            l_col = next((c for c in df_rabais.columns if 'promo' in c.lower()), df_rabais.columns[11])
+            l_col = next((c for c in df_rabais.columns if 'promo' in normaliser(c)), df_rabais.columns[11])
             rabais_lookup = {}
             for _, r_row in df_rabais.iterrows():
                 val_h = pd.to_datetime(r_row.get(debut_col), errors='coerce')
@@ -282,7 +297,7 @@ if fichier_upload is not None:
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement intelligent terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
