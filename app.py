@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement complet et rigoureux (Version {st.session_state.version_compteur}) en cours...")
+    st.info(f"Traitement rigoureux (Version {st.session_state.version_compteur}) en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -38,13 +38,19 @@ if fichier_upload is not None:
             df_rabais.columns = df_rabais.columns.str.strip()
             
             max_row = ws_cmd.max_row
+            tolerance = 10
+            
+            # Nettoyage des types numériques de base
+            df_cmd['Qté_commandée'] = pd.to_numeric(df_cmd['Qté_commandée'], errors='coerce').fillna(0)
+            df_cmd['Montant_ST'] = pd.to_numeric(df_cmd['Montant_ST'], errors='coerce').fillna(0)
+            df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
             
             # --- IDENTIFICATION DES COLONNES DE CRÉDIT ---
             col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'clé' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'clé' in str(c).lower() for c in df_cmd.columns) else None)
             col_date_recl_cred = 'Date_réclamé_détail_credité' if 'Date_réclamé_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'date' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'date' in str(c).lower() for c in df_cmd.columns) else None)
             
-            # --- INDEXATION GLOBALE ET PRÉ-CALCULS ---
-            cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'] != 'NaT') & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '')]['Clé_unique_détail_commande'].dropna())
+            # --- INDEXATION DES CLÉS GLOBALES ---
+            cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '') & (df_cmd['Date_Réclamée'].astype(str) != 'NaT')]['Clé_unique_détail_commande'].dropna().astype(str))
             cles_facture = set(df_cmd['Clé_unique_détail_facture'].dropna().astype(str)) if 'Clé_unique_détail_facture' in df_cmd.columns else set()
             cles_credite = set(df_cmd[col_cred].dropna().astype(str)) if col_cred else set()
             
@@ -55,50 +61,70 @@ if fichier_upload is not None:
             
             df_rabais[debut_col] = pd.to_datetime(df_rabais[debut_col], errors='coerce')
             df_rabais[fin_col] = pd.to_datetime(df_rabais[fin_col], errors='coerce')
-            df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
-            rabais_par_produit = df_rabais.groupby(prod_col)
+            rabais_dict = {prod: group for prod, group in df_rabais.groupby(prod_col)}
             
-            # Étape 1 : Pré-calculer les rabais entre 2 dates pour chaque ligne
-            df_cmd['_rabais_calc'] = 0.0
-            tolerance = 10
+            # --- PRÉ-CALCUL RAPIDE DE _rabais_calc ---
+            rabais_calc_arr = np.zeros(len(df_cmd))
+            date_deb_arr = [''] * len(df_cmd)
+            date_fin_arr = [''] * len(df_cmd)
             
             for idx, row in df_cmd.iterrows():
                 prod = row.get('No_Produit', None)
-                date_facture = row.get('Date_Facture', pd.NaT)
-                qte = float(row.get('Qté_commandée', 0)) if pd.notnull(row.get('Qté_commandée', 0)) else 0
+                df_date = row.get('Date_Facture', pd.NaT)
+                qte = row.get('Qté_commandée', 0)
                 
-                if prod in rabais_par_produit.groups and pd.notnull(date_facture):
-                    sub_df = rabais_par_produit.get_group(prod).copy()
-                    sub_df['crit'] = (sub_df[debut_col] <= date_facture + pd.Timedelta(days=tolerance)) & \
-                                     (sub_df[fin_col] >= date_facture - pd.Timedelta(days=tolerance))
-                    valid_rabais = sub_df[sub_df['crit']].copy()
-                    if not valid_rabais.empty:
-                        valid_rabais['dH'] = (valid_rabais[debut_col] - date_facture).abs()
-                        valid_rabais['dI'] = (valid_rabais[fin_col] - date_facture).abs()
-                        valid_rabais['dist'] = valid_rabais[['dH', 'dI']].min(axis=1)
-                        valid_rabais = valid_rabais.sort_values(by=['dist', debut_col], ascending=[True, False])
-                        best_row = valid_rabais.iloc[0]
-                        taux_rabais = float(best_row[rabais_col]) if pd.notnull(best_row[rabais_col]) else 0
-                        df_cmd.at[idx, '_rabais_calc'] = taux_rabais * qte
+                if prod in rabais_dict and pd.notnull(df_date):
+                    sub = rabais_dict[prod]
+                    valid = sub[(sub[debut_col] <= df_date + pd.Timedelta(days=tolerance)) & (sub[fin_col] >= df_date - pd.Timedelta(days=tolerance))].copy()
+                    if not valid.empty:
+                        valid['dH'] = (valid[debut_col] - df_date).abs()
+                        valid['dI'] = (valid[fin_col] - df_date).abs()
+                        valid['dist'] = valid[['dH', 'dI']].min(axis=1)
+                        valid = valid.sort_values(by=['dist', debut_col], ascending=[True, False])
+                        best = valid.iloc[0]
+                        taux = float(best[rabais_col]) if pd.notnull(best[rabais_col]) else 0
+                        rabais_calc_arr[idx] = taux * qte
+                        date_deb_arr[idx] = best[debut_col].strftime('%Y-%m-%d') if pd.notnull(best[debut_col]) else ''
+                        date_fin_arr[idx] = best[fin_col].strftime('%Y-%m-%d') if pd.notnull(best[fin_col]) else ''
+            
+            df_cmd['_rabais_calc'] = rabais_calc_arr
 
-            # Étape 2 : Pré-calculer la colonne N (Rabais maximum offert : 1 ou 0 par clé de commande)
-            df_cmd['_col_N'] = 0
-            for cle_cmd, group in df_cmd.groupby('Clé_unique_détail_commande'):
-                if str(cle_cmd).strip() != '' and str(cle_cmd) != 'nan':
-                    max_rab = group['_rabais_calc'].max()
-                    indices_max = group[group['_rabais_calc'] == max_rab].index
-                    df_cmd.loc[indices_max, '_col_N'] = 1
+            # --- PRÉ-CALCUL DE LA COLONNE N ---
+            col_n_arr = np.zeros(len(df_cmd))
+            for _, group in df_cmd.groupby('Clé_unique_détail_commande'):
+                max_r = group['_rabais_calc'].max()
+                col_n_arr[group[group['_rabais_calc'] == max_r].index] = 1
+            df_cmd['_col_N'] = col_n_arr
 
-            # --- BOUCLE LIGNE PAR LIGNE POUR LES RÈGLES DE SUPPRESSION ---
+            # --- PRÉ-CALCULS DES GROUPES (POUR I ET K) ---
+            mask_no_recl = df_cmd['Date_Réclamée'].isnull() | (df_cmd['Date_Réclamée'].astype(str).str.strip() == '') | (df_cmd['Date_Réclamée'].astype(str) == 'NaT')
+            sum_qte_i = df_cmd[mask_no_recl].groupby(['Clé_unique_détail_commande', 'No_Produit'])['Qté_commandée'].transform('sum')
+            max_rab_i = df_cmd[mask_no_recl].groupby(['Clé_unique_détail_commande', 'No_Produit'])['_rabais_calc'].transform('max')
+
+            sum_qte_k = df_cmd.groupby(['Clé_unique_détail_commande', 'No_Produit'])['Qté_commandée'].transform('sum')
+            
+            # Pour la condition 2 (existence d'une date de réclamation crédit dans le groupe)
+            if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
+                has_date_col = df_cmd[col_date_recl_cred].notnull() & (df_cmd[col_date_recl_cred].astype(str).str.strip() != '') & (df_cmd[col_date_recl_cred].astype(str) != 'NaT') & (df_cmd[col_date_recl_cred].astype(str) != 'nan')
+                group_has_date = df_cmd[has_date_col].groupby(['Clé_unique_détail_commande', 'No_Produit']).size().reindex(df_cmd.set_index(['Clé_unique_détail_commande', 'No_Produit']).index, fill_value=0)
+            else:
+                group_has_date = pd.Series(0, index=df_cmd.index)
+
+            # Pour la condition 3 (somme / présence des clés crédit = 0 dans le groupe)
+            if col_cred and col_cred in df_cmd.columns:
+                valid_cred = df_cmd[col_cred].notnull() & (df_cmd[col_cred].astype(str).str.strip() != '') & (df_cmd[col_cred].astype(str) != '0') & (df_cmd[col_cred].astype(str) != 'nan')
+                group_cred_count = df_cmd[valid_cred].groupby(['Clé_unique_détail_commande', 'No_Produit']).size().reindex(df_cmd.set_index(['Clé_unique_détail_commande', 'No_Produit']).index, fill_value=0)
+            else:
+                group_cred_count = pd.Series(0, index=df_cmd.index)
+
+            # --- BOUCLE D'ÉCRITURE LIGNE PAR LIGNE ---
             for r in range(2, max_row + 1):
                 idx = r - 2
                 if idx < len(df_cmd):
                     row = df_cmd.loc[idx]
                     
-                    prod = row.get('No_Produit', None)
-                    date_facture = row.get('Date_Facture', pd.NaT)
-                    qte = float(row.get('Qté_commandée', 0)) if pd.notnull(row.get('Qté_commandée', 0)) else 0
-                    montant_st = float(row.get('Montant_ST', 0)) if pd.notnull(row.get('Montant_ST', 0)) else 0
+                    qte = row.get('Qté_commandée', 0)
+                    montant_st = row.get('Montant_ST', 0)
                     
                     raw_promo = row.get('Code_promotion', '')
                     code_promo = str(raw_promo) if pd.notnull(raw_promo) and raw_promo != 'nan' else ''
@@ -108,9 +134,7 @@ if fichier_upload is not None:
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
                     date_recl = row.get('Date_Réclamée', None)
                     
-                    date_recl_cred_val = row.get(col_date_recl_cred, None) if col_date_recl_cred else None
-                    
-                    # --- ÉVALUATION DE CHAQUE COLONNE DE SUPPRESSION (B À M) ---
+                    # --- ÉVALUATION DES SUPPRESSIONS (B À M) ---
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
                     suppr_2 = "Supprimer" if cle_cmd in cles_reclamees else ""
                     suppr_d = "Supprimer" if suppr_2 == "Supprimer" else ""
@@ -124,14 +148,8 @@ if fichier_upload is not None:
                     suppr_6 = ""
                     is_no_recl = (pd.isnull(date_recl) or str(date_recl).strip() == "" or str(date_recl) == "NaT")
                     if is_no_recl:
-                        mask_group = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & \
-                                     (df_cmd['No_Produit'].astype(str) == str(prod)) & \
-                                     (df_cmd['Date_Réclamée'].isnull() | (df_cmd['Date_Réclamée'].astype(str).str.strip() == ""))
-                        group_subset = df_cmd[mask_group]
-                        sum_qte = group_subset['Qté_commandée'].sum()
-                        if sum_qte >= 0:
-                            max_rabais_group = group_subset['_rabais_calc'].max()
-                            if row['_rabais_calc'] < max_rabais_group:
+                        if sum_qte_i.iloc[idx] >= 0:
+                            if row['_rabais_calc'] < max_rab_i.iloc[idx]:
                                 suppr_6 = "Supprimer"
                     
                     # Colonne J (Supprimer #7)
@@ -147,23 +165,20 @@ if fichier_upload is not None:
                             if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
                                 suppr_7 = "Supprimer"
 
-                    # --- COLONNE K (Supprimer #8) ---
+                    # --- COLONNE K (Supprimer #8 - Basé sur les SOMME.SI.ENS du groupe) ---
                     suppr_8 = ""
-                    # 1. Calcul de la quantité nette (somme des quantités pour la même clé commande + même produit)
-                    mask_qte_net = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['No_Produit'].astype(str) == str(prod))
-                    qte_nette = df_cmd[mask_qte_net]['Qté_commandée'].sum()
+                    cond1_qte_nette = (sum_qte_k.iloc[idx] > 0)
+                    cond2_date_recl = (group_has_date.iloc[idx] > 0)
+                    cond3_cle_absent = (group_cred_count.iloc[idx] == 0)
+                    cond4_montant = (montant_st < 0.99)
                     
-                    # 2. Vérification des conditions : Qté nette > 0, date réclamation crédit non vide, clé crédit vide/0/absente, montant < 0.99
-                    has_date_recl_cred = pd.notnull(date_recl_cred_val) and str(date_recl_cred_val).strip() != "" and str(date_recl_cred_val) != "NaT" and str(date_recl_cred_val) != "nan"
-                    is_cle_cred_absent = (cle_cred_val == '' or cle_cred_val == 'nan' or cle_cred_val == '0' or cle_cred_val is None)
-                    
-                    if qte_nette > 0 and has_date_recl_cred and is_cle_cred_absent and montant_st < 0.99:
+                    if cond1_qte_nette and cond2_date_recl and cond3_cle_absent and cond4_montant:
                         suppr_8 = "Supprimer"
 
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
-                    # --- CALCULS FINANCIERS ET TEMPORELS ---
+                    # --- CALCULS FINANCIERS ---
                     rabais_entre_2_dates = row['_rabais_calc']
                     rabais_total = qte * montant_st
                     ecart = rabais_total - rabais_entre_2_dates
@@ -189,21 +204,27 @@ if fichier_upload is not None:
                     ws_cmd.cell(row=r, column=12).value = suppr_9
                     ws_cmd.cell(row=r, column=13).value = suppr_10
                     
-                    ws_cmd.cell(row=r, column=14).value = val_col_n          # N
-                    ws_cmd.cell(row=r, column=15).value = rabais_total      # O
-                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates # P
-                    ws_cmd.cell(row=r, column=17).value = indicateur_tolerance # Q
-                    ws_cmd.cell(row=r, column=18).value = tolerance         # R
-                    ws_cmd.cell(row=r, column=22).value = ecart             # V
+                    ws_cmd.cell(row=r, column=14).value = val_col_n
+                    ws_cmd.cell(row=r, column=15).value = rabais_total
+                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates
+                    ws_cmd.cell(row=r, column=17).value = indicateur_tolerance
+                    ws_cmd.cell(row=r, column=18).value = tolerance
+                    
+                    if date_deb_arr[idx]:
+                        ws_cmd.cell(row=r, column=19).value = date_deb_arr[idx]
+                    if date_fin_arr[idx]:
+                        ws_cmd.cell(row=r, column=20).value = date_fin_arr[idx]
+                        
+                    ws_cmd.cell(row=r, column=22).value = ecart
             
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
-            output_buffer.seek(0, 0)
+            output_buffer.seek(0)
             
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement complet terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
