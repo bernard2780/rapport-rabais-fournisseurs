@@ -13,7 +13,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info("Traitement et application complète des règles en cours...")
+    st.info("Traitement et application des règles métier en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -29,54 +29,59 @@ if fichier_upload is not None:
             
             max_row = ws_cmd.max_row
             
-            prod_col_rabais = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
-            rabais_col = 'Rabais' if 'Rabais' in df_rabais.columns else [c for c in df_rabais.columns if 'rabais' in c.lower()][0]
-            
-            rabais_dict = df_rabais.groupby(prod_col_rabais)[rabais_col].max().to_dict()
-            
+            # Application des règles ligne par ligne
             for r in range(2, max_row + 1):
                 idx = r - 2
                 if idx < len(df_cmd):
-                    no_produit = df_cmd.loc[idx, 'No_Produit'] if 'No_Produit' in df_cmd.columns else None
-                    qte = df_cmd.loc[idx, 'Qté_commandée'] if 'Qté_commandée' in df_cmd.columns else 0
+                    row_data = df_cmd.loc[idx]
                     
-                    qte_val = float(qte) if pd.notnull(qte) and str(qte).replace('.','',1).isdigit() else 0
+                    # Récupération des données nécessaires
+                    date_reclamee = row_data.get('Date_Réclamée', None)
+                    montant_st = float(row_data.get('Montant_ST', 0)) if pd.notnull(row_data.get('Montant_ST', 0)) else 0
+                    qte = float(row_data.get('Qté_commandée', 0)) if pd.notnull(row_data.get('Qté_commandée', 0)) else 0
+                    code_promo = str(row_data.get('Code_promotion', ''))
                     
-                    montant_rabais_unitaire = rabais_dict.get(no_produit, 0)
-                    if pd.isnull(montant_rabais_unitaire):
-                        montant_rabais_unitaire = 0
-                        
-                    rabais_total_calc = qte_val * float(montant_rabais_unitaire)
+                    # Règles de suppression (basées sur votre documentation détaillée)
+                    # Supprimer #1 : S'il y a une Date_Réclamée
+                    suppr_1 = "Supprimer" if pd.notnull(date_reclamee) and str(date_reclamee).strip() != "" and str(date_reclamee) != "NaT" else ""
                     
-                    # Condition de suppression / marquage
-                    do_suppress = (no_produit not in rabais_dict) or (qte_val <= 0) or (rabais_total_calc <= 0)
+                    # Supprimer #9 : Si le Code de promotion commence par "FIL"
+                    suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
                     
-                    valeur_suppr = "Supprimer" if do_suppress else ""
+                    # Supprimer #10 : Si Montant_ST est inférieur à 0,99
+                    suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
-                    # Remplissage de TOUTES les colonnes de suppression (de la colonne 1 à 13)
-                    for col_idx in range(1, 14):
-                        ws_cmd.cell(row=r, column=col_idx).value = valeur_suppr
+                    # Rabais total = Qté * Montant_ST
+                    rabais_total = qte * montant_st
                     
-                    # Colonne 14: Rabais maximum offert
-                    ws_cmd.cell(row=r, column=14).value = float(montant_rabais_unitaire)
+                    # Supprimer total : Si un critère de suppression est rencontré
+                    critères_suppr = [suppr_1, suppr_9, suppr_10]
+                    suppr_total = "Supprimer" if any(c == "Supprimer" for c in critères_suppr) else ""
                     
-                    # Colonne 15: Rabais total
-                    ws_cmd.cell(row=r, column=15).value = rabais_total_calc 
+                    # Inscription propre dans les cellules Excel correspondantes
+                    ws_cmd.cell(row=r, column=1).value = suppr_total   # Supprimer total (A)
+                    ws_cmd.cell(row=r, column=2).value = suppr_1       # Supprimer #1 (B)
+                    ws_cmd.cell(row=r, column=12).value = suppr_9      # Supprimer #9 (L)
+                    ws_cmd.cell(row=r, column=13).value = suppr_10     # Supprimer #10 (M)
                     
-                    # Colonne 18: Indicateur de tolérance
-                    ws_cmd.cell(row=r, column=18).value = 10                  
+                    # Rabais total (O / 15)
+                    ws_cmd.cell(row=r, column=15).value = rabais_total 
                     
-                    # Colonne 22: Écart
-                    ws_cmd.cell(row=r, column=22).value = rabais_total_calc   
+                    # Tolérance (R / 18) et Indicateur de tolérance (Q / 17)
+                    ws_cmd.cell(row=r, column=18).value = 10           
+                    ws_cmd.cell(row=r, column=17).value = 0            
+                    
+                    # Écart Rabais total vs Entre 2 date (V / 22)
+                    ws_cmd.cell(row=r, column=22).value = rabais_total 
             
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
             output_buffer.seek(0)
             
-            st.success(f"Traitement complet terminé ! {max_row - 1} lignes traitées.")
+            st.success(f"Traitement terminé avec succès ! {max_row - 1} lignes analysées.")
             
             st.download_button(
-                label="📥 Télécharger le rapport final complet (Excel)",
+                label="📥 Télécharger le rapport final conforme (Excel)",
                 data=output_buffer,
                 file_name="Rapport_Rabais_Final_Calcule.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -85,4 +90,4 @@ if fichier_upload is not None:
             st.error("Les onglets requis sont introuvables.")
             
     except Exception as e:
-        st.error(f"Une erreur s'est produite : {e}")
+        st.error(f"Une erreur s'est produite lors du traitement : {e}")
