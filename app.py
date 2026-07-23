@@ -45,7 +45,7 @@ if fichier_upload is not None:
             df_cmd['Montant_ST'] = pd.to_numeric(df_cmd['Montant_ST'], errors='coerce').fillna(0)
             df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
             
-            # --- IDENTIFICATION DES COLONNES CLÉS ---
+            # --- IDENTIFICATION DES COLONNES PAR LEUR NOM EXACT ---
             col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'clé' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'clé' in str(c).lower() for c in df_cmd.columns) else None)
             col_date_recl_cred = 'Date_réclamé_détail_credité' if 'Date_réclamé_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'date' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'date' in str(c).lower() for c in df_cmd.columns) else None)
             
@@ -134,16 +134,17 @@ if fichier_upload is not None:
                     # --- ÉVALUATION ---
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
                     
-                    # Colonne C : Valeur de la clé de commande si réclamée
+                    # Colonne C : Valeur de Clé_unique_détail_commande si réclamée
                     val_col_c = cle_cmd if (cle_cmd in cles_reclamees and cle_cmd != "") else ""
                     suppr_d = "Supprimer" if val_col_c != "" else ""
                     
-                    cond_suppr_3 = ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
-                                     (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan'))
-                    suppr_3 = "Supprimer" if cond_suppr_3 else ""
+                    # Condition 3 / 4 (Vérification du crédit)
+                    cond_credit_remplie = (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan')
+                    suppr_3 = "Supprimer" if cond_credit_remplie else ""
+                    suppr_4 = "Supprimer" if cond_credit_remplie else ""
                     
-                    # Colonne F : Valeur de la facture si créditée
-                    val_col_f = cle_fact if (cle_fact in cles_credite and cle_fact != "") else ""
+                    # Colonne F : Si le détail est crédité, ramener la valeur de Clé_unique_détail_commande
+                    val_col_f = cle_cmd if cond_credit_remplie else ""
                     suppr_g = "Supprimer" if val_col_f != "" else ""
                     
                     suppr_5 = "Supprimer" if qte < 0 else ""
@@ -218,10 +219,10 @@ if fichier_upload is not None:
                     # --- ÉCRITURE DANS LE CLASSEUR EXCEL ---
                     ws_cmd.cell(row=r, column=1).value = suppr_total
                     ws_cmd.cell(row=r, column=2).value = suppr_1
-                    ws_cmd.cell(row=r, column=3).value = val_col_c  # Col C : Valeur de la clé
+                    ws_cmd.cell(row=r, column=3).value = val_col_c  # Col C : Clé_unique_détail_commande
                     ws_cmd.cell(row=r, column=4).value = suppr_d
                     ws_cmd.cell(row=r, column=5).value = suppr_3
-                    ws_cmd.cell(row=r, column=6).value = val_col_f  # Col F : Valeur de la facture
+                    ws_cmd.cell(row=r, column=6).value = val_col_f  # Col F : Clé_unique_détail_commande (quand crédité)
                     ws_cmd.cell(row=r, column=7).value = suppr_g
                     ws_cmd.cell(row=r, column=8).value = suppr_5
                     ws_cmd.cell(row=r, column=9).value = suppr_6
