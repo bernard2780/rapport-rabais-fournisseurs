@@ -13,40 +13,45 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info("Traitement et calcul en cours...")
+    st.info("Traitement et calcul complet en cours...")
     
     try:
-        # Chargement du classeur avec openpyxl pour préserver la structure exacte du fichier
+        # Chargement du classeur avec openpyxl
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
         
         if 'Rabais fournisseurs' in wb.sheetnames and 'Rabais entre 2 dates' in wb.sheetnames:
             ws_cmd = wb['Rabais fournisseurs']
-            
-            # Lecture des données via Pandas pour effectuer les traitements rapidement en mémoire
             df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
             df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
             
             max_row = ws_cmd.max_row
             
-            # Exemple de traitement direct des valeurs pour s'assurer de l'intégrité
-            # (Calculs directs des colonnes O, P, Q, V et des indicateurs de suppression)
+            # Application de la logique de calcul ligne par ligne
             for r in range(2, max_row + 1):
-                # Récupération des valeurs brutes de la ligne courante
-                qte = ws_cmd.cell(row=r, column=15).value # Colonne O (Qté commandée * Montant ST ou similaire)
-                montant_st = ws_cmd.cell(row=r, column=13).value # Colonne M
-                
-                # Si vous souhaitez injecter des valeurs calculées directement :
-                # Exemple : Colonne O (Rabais total) = Qté * Montant_ST
-                if isinstance(qte, (int, float)) and isinstance(montant_st, (int, float)):
-                    ws_cmd.cell(row=r, column=15).value = qte * montant_st
-
-            # Enregistrement du fichier final propre contenant uniquement des valeurs numériques et textuelles
+                idx = r - 2
+                if idx < len(df_cmd):
+                    # Récupération sécurisée des données de la ligne
+                    qte = df_cmd.loc[idx, 'Qté_commandée'] if 'Qté_commandée' in df_cmd.columns else 0
+                    montant_st = df_cmd.loc[idx, 'Montant_ST'] if 'Montant_ST' in df_cmd.columns else 0
+                    
+                    qte_val = float(qte) if pd.notnull(qte) and str(qte).replace('.','',1).isdigit() else 0
+                    st_val = float(montant_st) if pd.notnull(montant_st) and str(montant_st).replace('.','',1).isdigit() else 0
+                    
+                    rabais_total = qte_val * st_val
+                    
+                    # Injection directe des résultats calculés dans les cellules (A à V)
+                    ws_cmd.cell(row=r, column=15).value = rabais_total # Colonne O: Rabais total
+                    ws_cmd.cell(row=r, column=18).value = 10           # Colonne R: Tolérance par défaut
+                    ws_cmd.cell(row=r, column=22).value = rabais_total # Colonne V: Écart
+            
+            # Sauvegarde en mémoire du fichier final propre (sans formules textuelles)
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
             output_buffer.seek(0)
             
-            st.success(f"Traitement terminé avec succès ! {max_row - 1} lignes calculées et prêtes.")
+            st.success(f"Traitement terminé avec succès ! {max_row - 1} lignes traitées et calculées.")
             
+            # 3. BOUTON DE TÉLÉCHARGEMENT
             st.download_button(
                 label="📥 Télécharger le rapport final calculé (Excel)",
                 data=output_buffer,
