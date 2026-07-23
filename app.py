@@ -6,17 +6,18 @@ import numpy as np
 
 # 1. CONFIGURATION DE LA PAGE WEB
 st.set_page_config(page_title="Générateur de Rapport", layout="wide")
-st.title("Générateur de Rapport : Rabais Fournisseurs")
-st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 
 if 'version_compteur' not in st.session_state:
     st.session_state.version_compteur = 1
+
+st.title(f"Générateur de Rapport : Rabais Fournisseurs (v{st.session_state.version_compteur})")
+st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 
 # 2. BOUTON D'IMPORTATION
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info("Traitement et application de l'algorithme complet en cours...")
+    st.info(f"Traitement complet (Version {st.session_state.version_compteur}) en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -32,18 +33,17 @@ if fichier_upload is not None:
             
             max_row = ws_cmd.max_row
             
-            # --- PRÉ-TRAITEMENT ET INDEXATION DES LISTES DE CLÉS ---
+            # --- INDEXATION GLOBALE POUR LES CRITÈRES ---
             cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'] != 'NaT') & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '')]['Clé_unique_détail_commande'].dropna())
-            
-            col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in c.lower()][0] if any('crédit' in c.lower() for c in df_cmd.columns) else None)
-            
             cles_facture = set(df_cmd['Clé_unique_détail_facture'].dropna().astype(str)) if 'Clé_unique_détail_facture' in df_cmd.columns else set()
+            
+            col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower()][0] if any('crédit' in str(c).lower() for c in df_cmd.columns) else None)
             cles_credite = set(df_cmd[col_cred].dropna().astype(str)) if col_cred else set()
             
             prod_col = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
-            debut_col = 'Date début' if 'Date début' in df_rabais.columns else [c for c in df_rabais.columns if 'début' in c.lower()][0]
-            fin_col = 'Date échéance' if 'Date échéance' in df_rabais.columns else [c for c in df_rabais.columns if 'échéance' in c.lower() or 'fin' in c.lower()][0]
-            rabais_col = 'Rabais' if 'Rabais' in df_rabais.columns else [c for c in df_rabais.columns if 'rabais' in c.lower()][0]
+            debut_col = 'Date début' if 'Date début' in df_rabais.columns else [c for c in df_rabais.columns if 'début' in str(c).lower()][0]
+            fin_col = 'Date échéance' if 'Date échéance' in df_rabais.columns else [c for c in df_rabais.columns if 'échéance' in str(c).lower() or 'fin' in str(c).lower()][0]
+            rabais_col = 'Rabais' if 'Rabais' in df_rabais.columns else [c for c in df_rabais.columns if 'rabais' in str(c).lower()][0]
             
             df_rabais[debut_col] = pd.to_datetime(df_rabais[debut_col], errors='coerce')
             df_rabais[fin_col] = pd.to_datetime(df_rabais[fin_col], errors='coerce')
@@ -60,7 +60,11 @@ if fichier_upload is not None:
                     date_facture = row.get('Date_Facture', pd.NaT)
                     qte = float(row.get('Qté_commandée', 0)) if pd.notnull(row.get('Qté_commandée', 0)) else 0
                     montant_st = float(row.get('Montant_ST', 0)) if pd.notnull(row.get('Montant_ST', 0)) else 0
-                    code_promo = str(row.get('Code_promotion', ''))
+                    
+                    # Sécurisation stricte du code promo contre les valeurs non textuelles (float/NaN)
+                    raw_promo = row.get('Code_promotion', '')
+                    code_promo = str(raw_promo) if pd.notnull(raw_promo) and raw_promo != 'nan' else ''
+                    
                     cle_cmd = str(row.get('Clé_unique_détail_commande', ''))
                     cle_fact = str(row.get('Clé_unique_détail_facture', '')) if pd.notnull(row.get('Clé_unique_détail_facture', '')) else ''
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
@@ -68,45 +72,20 @@ if fichier_upload is not None:
                     date_recl_cred = row.get('Date_réclamé_détail_credité', None) if 'Date_réclamé_détail_credité' in df_cmd.columns else None
                     tolerance = 10
                     
-                    # -------------------------------------------------------------------------
-                    # ÉVALUATION DE CHAQUE COLONNE DE SUPPRESSION (B À M)
-                    # -------------------------------------------------------------------------
-                    # Supprimer #1 (Col B) : S'il y a une Date_Réclamée
+                    # --- ÉVALUATION DE CHAQUE COLONNE DE SUPPRESSION (B À M) ---
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
-                    
-                    # Supprimer #2 (Col C) : Si Date_Réclamée trouvée pour cette clé de commande
                     suppr_2 = "Supprimer" if cle_cmd in cles_reclamees else ""
-                    
-                    # Colonne D : Doublon
                     suppr_d = "Supprimer" if suppr_2 == "Supprimer" else ""
-                    
-                    # Supprimer #3 (Col E) : Si la Clé_crédité est trouvée dans Clé_facture (ou vice-versa)
                     suppr_3 = "Supprimer" if ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
                                                (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan')) else ""
-                    
-                    # Supprimer #4 (Col F) : Si la Clé_unique_détail_facture est trouvée dans la Clé_unique_détail_crédité
                     suppr_4 = "Supprimer" if (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan') else ""
-                    
-                    # Colonne G : Doublon lié à F
                     suppr_g = "Supprimer" if suppr_4 == "Supprimer" else ""
-                    
-                    # Supprimer #5 (Col H) : Quantité commandée négative
                     suppr_5 = "Supprimer" if qte < 0 else ""
-                    
-                    # Supprimer #6 (Col I) : Quantité positive sans réclamation
                     suppr_6 = "" 
-                    
-                    # Supprimer #7 (Col J) : Vérification du rabais maximal (N=1 ou non optimal)
                     suppr_7 = ""
-                    
-                    # Supprimer #8 (Col K) : Quantité nette > 0, date réclamation crédit non vide, pas de clé crédit, montant < 0,99
                     has_date_recl_cred = pd.notnull(date_recl_cred) and str(date_recl_cred).strip() != "" and str(date_recl_cred) != "NaT"
                     suppr_8 = "Supprimer" if (qte > 0 and has_date_recl_cred and (cle_cred_val == '' or cle_cred_val == 'nan' or cle_cred_val == '0') and montant_st < 0.99) else ""
-                    
-                    # Supprimer #9 (Col L) : Code promo commence par "FIL"
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
-                    
-                    # Supprimer #10 (Col M) : Montant_ST < 0,99
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
                     # --- CALCULS FINANCIERS ET TEMPORELS ---
