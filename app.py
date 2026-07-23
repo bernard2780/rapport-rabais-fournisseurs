@@ -3,6 +3,7 @@ import pandas as pd
 import openpyxl
 import io
 import numpy as np
+from datetime import datetime
 
 # 1. CONFIGURATION DE LA PAGE WEB
 st.set_page_config(page_title="Générateur de Rapport", layout="wide")
@@ -11,6 +12,10 @@ if 'version_compteur' not in st.session_state:
     st.session_state.version_compteur = 1
 
 st.title(f"Générateur de Rapport : Rabais Fournisseurs (v{st.session_state.version_compteur})")
+
+date_heure_actuelle = datetime.now().strftime("%Y-%m-%d à %H:%M:%S")
+st.caption(f"📅 Génération du rapport — Date et heure actuelles : {date_heure_actuelle}")
+
 st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 
 # 2. BOUTON D'IMPORTATION
@@ -50,7 +55,7 @@ if fichier_upload is not None:
             df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
             rabais_par_produit = df_rabais.groupby(prod_col)
             
-            # 1. Étape préliminaire : Calculer d'abord les rabais entre 2 dates pour toutes les lignes (nécessaire pour Col I)
+            # Étape 1 : Pré-calculer les rabais entre 2 dates pour chaque ligne
             df_cmd['_rabais_calc'] = 0.0
             tolerance = 10
             
@@ -72,7 +77,16 @@ if fichier_upload is not None:
                         best_row = valid_rabais.iloc[0]
                         taux_rabais = float(best_row[rabais_col]) if pd.notnull(best_row[rabais_col]) else 0
                         df_cmd.at[idx, '_rabais_calc'] = taux_rabais * qte
-            
+
+            # Étape 2 : Pré-calculer la colonne N (Rabais maximum offert : 1 ou 0 par clé de commande)
+            df_cmd['_col_N'] = 0
+            for cle_cmd, group in df_cmd.groupby('Clé_unique_détail_commande'):
+                if str(cle_cmd).strip() != '' and str(cle_cmd) != 'nan':
+                    max_rab = group['_rabais_calc'].max()
+                    # Les lignes qui ont ce rabais max obtiennent 1, les autres 0
+                    indices_max = group[group['_rabais_calc'] == max_rab].index
+                    df_cmd.loc[indices_max, '_col_N'] = 1
+
             # --- BOUCLE LIGNE PAR LIGNE POUR LES RÈGLES DE SUPPRESSION ---
             for r in range(2, max_row + 1):
                 idx = r - 2
@@ -103,8 +117,7 @@ if fichier_upload is not None:
                     suppr_g = "Supprimer" if suppr_4 == "Supprimer" else ""
                     suppr_5 = "Supprimer" if qte < 0 else ""
                     
-                    # --- COLONNE I (Supprimer #6) ---
-                    # Condition 1 : Somme des quantités pour la même clé commande + même produit sans date réclamée >= 0
+                    # Col I (Supprimer #6)
                     suppr_6 = ""
                     is_no_recl = (pd.isnull(date_recl) or str(date_recl).strip() == "" or str(date_recl) == "NaT")
                     if is_no_recl:
@@ -113,15 +126,25 @@ if fichier_upload is not None:
                                      (df_cmd['Date_Réclamée'].isnull() | (df_cmd['Date_Réclamée'].astype(str).str.strip() == ""))
                         group_subset = df_cmd[mask_group]
                         sum_qte = group_subset['Qté_commandée'].sum()
-                        
                         if sum_qte >= 0:
                             max_rabais_group = group_subset['_rabais_calc'].max()
-                            current_rabais = row['_rabais_calc']
-                            # Si le rabais de cette ligne est inférieur au maximum du groupe -> Supprimer
-                            if current_rabais < max_rabais_group:
+                            if row['_rabais_calc'] < max_rabais_group:
                                 suppr_6 = "Supprimer"
                     
+                    # --- COLONNE J (Supprimer #7) ---
                     suppr_7 = ""
+                    val_n = row['_col_N']
+                    if val_n == 0:
+                        suppr_7 = "Supprimer"
+                    else:
+                        # Si N=1, vérifier si cette ligne a la plus grande Clé_unique_détail_facture parmi les lignes N=1 de la même commande
+                        mask_n1 = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['_col_N'] == 1)
+                        sub_n1 = df_cmd[mask_n1]
+                        if not sub_n1.empty:
+                            max_facture = sub_n1['Clé_unique_détail_facture'].max()
+                            if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
+                                suppr_7 = "Supprimer"
+
                     has_date_recl_cred = pd.notnull(date_recl_cred) and str(date_recl_cred).strip() != "" and str(date_recl_cred) != "NaT"
                     suppr_8 = "Supprimer" if (qte > 0 and has_date_recl_cred and (cle_cred_val == '' or cle_cred_val == 'nan' or cle_cred_val == '0') and montant_st < 0.99) else ""
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
@@ -131,8 +154,8 @@ if fichier_upload is not None:
                     rabais_entre_2_dates = row['_rabais_calc']
                     rabais_total = qte * montant_st
                     ecart = rabais_total - rabais_entre_2_dates
-                    
-                    indicateur_tolerance = 0 # (Optionnel selon tolérance)
+                    indicateur_tolerance = 0
+                    val_col_n = row['_col_N']
                     
                     # --- SUPPRIMER TOTAL (Col A) ---
                     tous_criteres = [suppr_1, suppr_2, suppr_d, suppr_3, suppr_4, suppr_g, suppr_5, suppr_6, suppr_7, suppr_8, suppr_9, suppr_10]
@@ -153,18 +176,19 @@ if fichier_upload is not None:
                     ws_cmd.cell(row=r, column=12).value = suppr_9
                     ws_cmd.cell(row=r, column=13).value = suppr_10
                     
-                    ws_cmd.cell(row=r, column=15).value = rabais_total
-                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates
-                    ws_cmd.cell(row=r, column=17).value = indicateur_tolerance
-                    ws_cmd.cell(row=r, column=18).value = tolerance
-                    
-                    ws_cmd.cell(row=r, column=22).value = ecart
+                    ws_cmd.cell(row=r, column=14).value = val_col_n          # N: Rabais maximum offert
+                    ws_cmd.cell(row=r, column=15).value = rabais_total      # O: Rabais total
+                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates # P: Rabais entre 2 date
+                    ws_cmd.cell(row=r, column=17).value = indicateur_tolerance # Q
+                    ws_cmd.cell(row=r, column=18).value = tolerance         # R
+                    ws_cmd.cell(row=r, column=22).value = ecart             # V
             
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
             output_buffer.seek(0)
             
-            nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}.xlsx"
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M")
+            nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
             st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
             
