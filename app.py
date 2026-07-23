@@ -33,7 +33,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement intelligent avec tolérance de correspondance en cours...")
+    st.info(f"Traitement rigoureux et intelligent en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -42,7 +42,7 @@ if fichier_upload is not None:
             ws_cmd = wb['Rabais fournisseurs']
             
             df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
-            df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais оснастка')
+            df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
             
             df_cmd.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_cmd.columns]
             df_rabais.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_rabais.columns]
@@ -50,15 +50,13 @@ if fichier_upload is not None:
             max_row = ws_cmd.max_row
             tolerance = 10
             
-            # --- CORRESPONDANCE INTELLIGENTE PAR SIMILARITÉ (SEUIL 85% / 98%) ---
+            # --- CORRESPONDANCE INTELLIGENTE PAR SIMILARITÉ ---
             def trouver_colonne_flexible(mots_cles_cibles, seuil=0.75):
                 meilleure_col = None
                 meilleur_score = 0.0
                 cible_str = " ".join(mots_cles_cibles)
                 for col in df_cmd.columns:
-                    # Test par similarité globale
                     score = similarite(col, cible_str)
-                    # Test si tous les mots clés sont contenus
                     col_norm = normaliser(col)
                     if all(normaliser(m) in col_norm for m in mots_cles_cibles):
                         score = max(score, 0.95)
@@ -71,7 +69,6 @@ if fichier_upload is not None:
                     return meilleure_col
                 return None
 
-            # Recherche intelligente et tolérante
             col_cle_cmd = trouver_colonne_flexible(['cle', 'unique', 'detail', 'commande']) or trouver_colonne_flexible(['cle', 'commande'])
             col_produit = trouver_colonne_flexible(['produit'])
             col_qte = trouver_colonne_flexible(['qte', 'commandee']) or trouver_colonne_flexible(['qte'])
@@ -83,9 +80,8 @@ if fichier_upload is not None:
             col_date_recl_cred = trouver_colonne_flexible(['credit', 'date'])
             col_promo_ligne = trouver_colonne_flexible(['promotion']) or trouver_colonne_flexible(['promo'])
 
-            # Si malgré la similarité la colonne est introuvable, on affiche un message clair avec les colonnes dispos
             if not col_cle_cmd:
-                st.error(f"Impossible de faire correspondre la clé de commande. Colonnes disponibles dans le fichier : {list(df_cmd.columns)}")
+                st.error(f"Impossible de faire correspondre la clé de commande. Colonnes disponibles : {list(df_cmd.columns)}")
                 st.stop()
 
             # Nettoyage des types numériques et dates
@@ -297,7 +293,7 @@ if fichier_upload is not None:
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement intelligent terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
