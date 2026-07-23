@@ -121,24 +121,29 @@ if fichier_upload is not None:
                             code_promo = str(raw_promo).strip()
                     
                     cle_cmd = str(row.get('Clé_unique_détail_commande', ''))
+                    if cle_cmd == 'nan' or not cle_cmd:
+                        cle_cmd = ""
+                        
                     cle_fact = str(row.get('Clé_unique_détail_facture', '')) if pd.notnull(row.get('Clé_unique_détail_facture', '')) else ''
+                    if cle_fact == 'nan' or not cle_fact:
+                        cle_fact = ""
+                        
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
                     date_recl = row.get('Date_Réclamée', None)
                     
-                    # --- ÉVALUATION DES COLONNES DE SUPPRESSION ET DE VALEUR ---
+                    # --- ÉVALUATION ---
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
                     
-                    # Colonne C (Col 3) : Contient la valeur de la clé si elle est réclamée, sinon vide
-                    val_col_c = cle_cmd if cle_cmd in cles_reclamees and cle_cmd != '' and cle_cmd != 'nan' else ""
-                    suppr_2 = val_col_c  # Utilisé pour le test global si non vide
+                    # Colonne C : Valeur de la clé de commande si réclamée
+                    val_col_c = cle_cmd if (cle_cmd in cles_reclamees and cle_cmd != "") else ""
                     suppr_d = "Supprimer" if val_col_c != "" else ""
                     
-                    suppr_3 = "Supprimer" if ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
-                                               (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan')) else ""
+                    cond_suppr_3 = ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
+                                     (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan'))
+                    suppr_3 = "Supprimer" if cond_suppr_3 else ""
                     
-                    # Colonne F (Col 6) : Contient la valeur de la facture si créditée, sinon vide
-                    val_col_f = cle_fact if (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan') else ""
-                    suppr_4 = val_col_f  # Utilisé pour le test global si non vide
+                    # Colonne F : Valeur de la facture si créditée
+                    val_col_f = cle_fact if (cle_fact in cles_credite and cle_fact != "") else ""
                     suppr_g = "Supprimer" if val_col_f != "" else ""
                     
                     suppr_5 = "Supprimer" if qte < 0 else ""
@@ -206,17 +211,17 @@ if fichier_upload is not None:
                     indicateur_tolerance = 0
                     val_col_n = row['_col_N']
                     
-                    # --- SUPPRIMER TOTAL (Col A) : Basé sur les critères actifs ---
+                    # --- SUPPRIMER TOTAL (Col A) ---
                     tous_criteres = [suppr_1, suppr_d, suppr_3, suppr_g, suppr_5, suppr_6, suppr_7, suppr_8, suppr_9, suppr_10]
                     suppr_total = "Supprimer" if any(c == "Supprimer" for c in tous_criteres) else ""
                     
                     # --- ÉCRITURE DANS LE CLASSEUR EXCEL ---
                     ws_cmd.cell(row=r, column=1).value = suppr_total
                     ws_cmd.cell(row=r, column=2).value = suppr_1
-                    ws_cmd.cell(row=r, column=3).value = val_col_c  # Col C (Valeur de la clé au lieu de Supprimer)
+                    ws_cmd.cell(row=r, column=3).value = val_col_c  # Col C : Valeur de la clé
                     ws_cmd.cell(row=r, column=4).value = suppr_d
                     ws_cmd.cell(row=r, column=5).value = suppr_3
-                    ws_cmd.cell(row=r, column=6).value = val_col_f  # Col F (Valeur de la facture au lieu de Supprimer)
+                    ws_cmd.cell(row=r, column=6).value = val_col_f  # Col F : Valeur de la facture
                     ws_cmd.cell(row=r, column=7).value = suppr_g
                     ws_cmd.cell(row=r, column=8).value = suppr_5
                     ws_cmd.cell(row=r, column=9).value = suppr_6
