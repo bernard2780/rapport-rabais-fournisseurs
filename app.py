@@ -58,7 +58,7 @@ if fichier_upload is not None:
             """)
             st.stop()
             
-        st.success(ែf"✅ Colonne de commande détectée avec succès : **{col_cle_cmd}**")
+        st.success(f"✅ Colonne de commande détectée avec succès : **{col_cle_cmd}**")
 
         # Recherche des autres colonnes indispensables
         col_produit = next((c for c in df_cmd.columns if 'produit' in c.lower()), df_cmd.columns[1])
