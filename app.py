@@ -160,34 +160,35 @@ if fichier_upload is not None:
                             if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
                                 suppr_7 = "Supprimer"
 
-                    # --- COLONNE K (Supprimer #8 - Traduction exacte de votre formule SOMME.SI.ENS) ---
+                    # --- COLONNE K (Supprimer #8 - Traduction 100% exacte de la formule Excel) ---
                     suppr_8 = ""
                     mask_k = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['No_Produit'].astype(str) == str(prod))
                     sub_k = df_cmd[mask_k]
                     
                     if not sub_k.empty:
-                        # Condition 1 : SOMME.SI.ENS(Qté_commandée, ...) > 0
-                        cond1_qte_nette = (sub_k['Qté_commandée'].sum() > 0)
+                        # 1. SOMME.SI.ENS(Qté_commandée, ...) > 0
+                        cond1 = (sub_k['Qté_commandée'].sum() > 0)
                         
-                        # Condition 2 : SOMME.SI.ENS(Date_réclamé_détail_crédité, ...) <> ""
+                        # 2. SOMME.SI.ENS(Date_réclamé_détail_crédité, ...) <> ""
+                        cond2 = False
                         if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
-                            d_rc = sub_k[col_date_recl_cred]
-                            cond2_date_recl = (d_rc.notnull() & (d_rc.astype(str).str.strip() != "") & (d_rc.astype(str) != "NaT") & (d_rc.astype(str) != "nan")).any()
-                        else:
-                            cond2_date_recl = False
+                            d_col = sub_k[col_date_recl_cred]
+                            # Vérifie s'il y a au moins une date valide (non vide, non NaT, non nan) dans le groupe
+                            valid_dates = d_col.notnull() & (d_col.astype(str).str.strip() != "") & (d_col.astype(str) != "NaT") & (d_col.astype(str) != "nan")
+                            cond2 = valid_dates.any()
                             
-                        # Condition 3 : SOMME.SI.ENS(Clé_unique_détail_crédité, ...) = 0 (Aucune clé de crédit active dans le groupe)
+                        # 3. SOMME.SI.ENS(Clé_unique_détail_crédité, ...) = 0 (en Excel, sommer du texte retourne 0, donc aucun crédit actif dans le groupe)
+                        cond3 = True
                         if col_cred and col_cred in df_cmd.columns:
-                            c_cr = sub_k[col_cred]
-                            valid_c = c_cr.notnull() & (c_cr.astype(str).str.strip() != "") & (c_cr.astype(str) != "0") & (c_cr.astype(str) != "nan")
-                            cond3_cle_absent = (valid_c.sum() == 0)
-                        else:
-                            cond3_cle_absent = True
+                            c_col = sub_k[col_cred]
+                            valid_creds = c_col.notnull() & (c_col.astype(str).str.strip() != "") & (c_col.astype(str) != "0") & (c_col.astype(str) != "nan")
+                            # Si le nombre de crédits valides dans le groupe est 0, alors la somme est 0
+                            cond3 = (valid_creds.sum() == 0)
                             
-                        # Condition 4 : Montant_ST < 0,99
-                        cond4_montant = (montant_st < 0.99)
+                        # 4. Montant_ST < 0,99 (pour la ligne actuelle)
+                        cond4 = (montant_st < 0.99)
                         
-                        if cond1_qte_nette and cond2_date_recl and cond3_cle_absent and cond4_montant:
+                        if cond1 and cond2 and cond3 and cond4:
                             suppr_8 = "Supprimer"
 
                     # Colonne L (Supprimer #9)
