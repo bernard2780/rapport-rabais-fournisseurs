@@ -48,7 +48,6 @@ if fichier_upload is not None:
                 col_cle_cmd = col
                 break
         
-        # Si malgré tout elle est introuvable, on affiche TOUTES vos colonnes réelles pour lever le mystère
         if not col_cle_cmd:
             st.error(f"""
             ❌ **Colonne de commande introuvable.**
@@ -158,17 +157,19 @@ if fichier_upload is not None:
             max_fact_n1_filled = df_cmd.groupby(col_cle_cmd)['_max_fact_n1'].transform('max')
 
         sum_qte_k_group = df_cmd.groupby(group_keys)['__qte_num'].transform('sum')
-        has_date_rc = pd.Series(False, index=df_cmd.index)
+        
+        # Correction robuste : rattachement temporaire au DataFrame pour éviter le KeyError sur les Séries
+        df_cmd['__has_date_rc'] = pd.Series(False, index=df_cmd.index)
         if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
             d_col = df_cmd[col_date_recl_cred]
-            has_date_rc = d_col.notnull() & (d_col.astype(str).str.strip() != "") & (d_col.astype(str) != "NaT") & (d_col.astype(str) != "nan")
-        group_has_date_rc = has_date_rc.groupby(group_keys).transform('any')
+            df_cmd['__has_date_rc'] = d_col.notnull() & (d_col.astype(str).str.strip() != "") & (d_col.astype(str) != "NaT") & (d_col.astype(str) != "nan")
+        group_has_date_rc = df_cmd.groupby(group_keys)['__has_date_rc'].transform('any')
 
-        has_valid_cred = pd.Series(False, index=df_cmd.index)
+        df_cmd['__has_valid_cred'] = pd.Series(False, index=df_cmd.index)
         if col_cred and col_cred in df_cmd.columns:
             c_col = df_cmd[col_cred]
-            has_valid_cred = c_col.notnull() & (c_col.astype(str).str.strip() != "") & (c_col.astype(str) != "0") & (c_col.astype(str) != "nan")
-        group_cred_count = has_valid_cred.groupby(group_keys).transform('sum')
+            df_cmd['__has_valid_cred'] = c_col.notnull() & (c_col.astype(str).str.strip() != "") & (c_col.astype(str) != "0") & (c_col.astype(str) != "nan")
+        group_cred_count = df_cmd.groupby(group_keys)['__has_valid_cred'].transform('sum')
 
         # --- 5. ÉCRITURE DANS OPENPYXL ---
         for r in range(2, max_row + 1):
