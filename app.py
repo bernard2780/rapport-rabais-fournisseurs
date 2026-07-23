@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement rigoureux et instantané (Version {st.session_state.version_compteur}) en cours...")
+    st.info(f"Traitement rigoureux par noms de colonnes (Version {st.session_state.version_compteur}) en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -34,36 +34,36 @@ if fichier_upload is not None:
             df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
             df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
             
-            # Nettoyage strict des en-têtes
+            # Normalisation stricte des en-têtes (suppression des espaces superflus)
             df_cmd.columns = [str(c).strip() for c in df_cmd.columns]
             df_rabais.columns = [str(c).strip() for c in df_rabais.columns]
             
             max_row = ws_cmd.max_row
             tolerance = 10
             
-            # --- DÉTECTION ROBUSTE ET SÉCURISÉE DES COLONNES ---
-            def trouve_col_par_mots(mots, fallback_idx):
+            # --- RECHERCHE SÉCURISÉE PAR NOM DE COLONNE ---
+            def trouver_colonne(mots_cles):
                 for col in df_cmd.columns:
-                    col_l = col.lower()
-                    if all(m in col_l for m in mots):
+                    col_lower = col.lower()
+                    if all(m.lower() in col_lower for m in mots_cles):
                         return col
-                return df_cmd.columns[fallback_idx] if len(df_cmd.columns) > fallback_idx else df_cmd.columns[0]
+                return None
 
-            col_cle_cmd = trouve_col_par_mots(['clé', 'commande'], 0)
-            col_produit = trouve_col_par_mots(['produit'], 1)
-            col_qte = trouve_col_par_mots(['qté', 'qte', 'quantité'], 2)
-            col_montant = trouve_col_par_mots(['montant', 'st'], 3)
-            
-            # Détection optionnelle sécurisée
-            col_date_fact = next((c for c in df_cmd.columns if 'date' in c.lower() and 'facture' in c.lower()), None)
-            col_date_recl = next((c for c in df_cmd.columns if 'réclamée' in c.lower() or 'reclamée' in c.lower() or 'reclamee' in c.lower()), None)
-            col_cle_fact = next((c for c in df_cmd.columns if 'clé' in c.lower() and 'facture' in c.lower()), None)
-            col_cred = next((c for c in df_cmd.columns if 'crédit' in c.lower() and 'clé' in c.lower()), None)
-            col_date_recl_cred = next((c for c in df_cmd.columns if 'crédit' in c.lower() and 'date' in c.lower()), None)
-            
-            col_promo_ligne = next((c for c in df_cmd.columns if 'promo' in c.lower() and 'code' in c.lower()), None)
-            if not col_promo_ligne:
-                col_promo_ligne = next((c for c in df_cmd.columns if 'promo' in c.lower()), None)
+            col_cle_cmd = trouver_colonne(['clé', 'unique', 'détail', 'commande']) or trouver_colonne(['clé', 'commande'])
+            col_produit = trouver_colonne(['no', 'produit']) or trouver_colonne(['produit'])
+            col_qte = trouver_colonne(['qté', 'commandée']) or trouver_colonne(['qte'])
+            col_montant = trouver_colonne(['montant', 'st'])
+            col_date_fact = trouver_colonne(['date', 'facture'])
+            col_date_recl = trouver_colonne(['date', 'réclamée']) or trouver_colonne(['réclamée'])
+            col_cle_fact = trouver_colonne(['clé', 'unique', 'détail', 'facture']) or trouver_colonne(['clé', 'facture'])
+            col_cred = trouver_colonne(['crédit', 'clé'])
+            col_date_recl_cred = trouver_colonne(['crédit', 'date'])
+            col_promo_ligne = trouver_colonne(['code', 'promotion']) or trouver_colonne(['promotion'])
+
+            # Vérification des colonnes obligatoires critiques
+            if not col_cle_cmd or not col_produit or not col_qte or not col_montant:
+                st.error(f"Colonnes introuvables. Vérifiez les en-têtes dans votre fichier Excel. (Détectées: Clé={col_cle_cmd}, Produit={col_produit}, Qte={col_qte}, Montant={col_montant})")
+                st.stop()
 
             # Nettoyage des types numériques et dates
             df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0)
@@ -76,9 +76,9 @@ if fichier_upload is not None:
 
             # --- 1. CALCUL DES RABAIS ENTRE 2 DATES ---
             prod_col_rab = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
-            debut_col = next((c for c in df_rabais.columns if 'début' in c.lower()), df_rabais.columns[7] if len(df_rabais.columns) > 7 else df_rabais.columns[0])
-            fin_col = next((c for c in df_rabais.columns if 'échéance' in c.lower() or 'fin' in c.lower()), df_rabais.columns[8] if len(df_rabais.columns) > 8 else df_rabais.columns[0])
-            rabais_col = next((c for c in df_rabais.columns if 'rabais' in c.lower()), df_rabais.columns[11] if len(df_rabais.columns) > 11 else df_rabais.columns[0])
+            debut_col = next((c for c in df_rabais.columns if 'début' in c.lower()), df_rabais.columns[7])
+            fin_col = next((c for c in df_rabais.columns if 'échéance' in c.lower() or 'fin' in c.lower()), df_rabais.columns[8])
+            rabais_col = next((c for c in df_rabais.columns if 'rabais' in c.lower()), df_rabais.columns[11])
             
             df_rabais[debut_col] = pd.to_datetime(df_rabais[debut_col], errors='coerce')
             df_rabais[fin_col] = pd.to_datetime(df_rabais[fin_col], errors='coerce')
@@ -117,7 +117,7 @@ if fichier_upload is not None:
             df_cmd['_col_N'] = col_n_arr
 
             # --- 3. INDEXATION RECHERCHEX (POUR COLONNE U) ---
-            l_col = next((c for c in df_rabais.columns if 'promo' in c.lower()), df_rabais.columns[11] if len(df_rabais.columns) > 11 else df_rabais.columns[0])
+            l_col = next((c for c in df_rabais.columns if 'promo' in c.lower()), df_rabais.columns[11])
             rabais_lookup = {}
             for _, r_row in df_rabais.iterrows():
                 val_h = pd.to_datetime(r_row.get(debut_col), errors='coerce')
@@ -127,7 +127,7 @@ if fichier_upload is not None:
                 if pd.notnull(val_h) and pd.notnull(val_i):
                     rabais_lookup[f"{val_h.strftime('%Y-%m-%d')}{val_i.strftime('%Y-%m-%d')}{val_b}"] = val_l
 
-            # --- 4. ENSEMBLES ET PRÉ-CALCULS POUR RÈGLES ---
+            # --- 4. ENSEMBLES ET PRÉ-CALCULS ---
             series_date_recl = df_cmd[col_date_recl] if col_date_recl and col_date_recl in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_reclamees = set(df_cmd[series_date_recl.notnull() & (series_date_recl.astype(str).str.strip() != '') & (series_date_recl.astype(str) != 'NaT')][col_cle_cmd].dropna().astype(str))
             
@@ -137,33 +137,33 @@ if fichier_upload is not None:
             series_cred = df_cmd[col_cred] if col_cred and col_cred in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_credite = set(series_cred.dropna().astype(str))
 
-            # Pré-calculs Col I (Supprimer #6)
+            # Pré-calculs Col I
             is_no_recl_mask = series_date_recl.isnull() | (series_date_recl.astype(str).str.strip() == "") | (series_date_recl.astype(str) == "NaT")
             df_cmd['_temp_i_rab'] = np.where(is_no_recl_mask, df_cmd['_rabais_calc'], -np.inf)
-            group_i_keys = [col_cle_cmd, col_produit]
-            max_rab_i_group = df_cmd.groupby(group_i_keys)['_temp_i_rab'].transform('max')
-            sum_qte_i_group = df_cmd.groupby(group_i_keys)['__qte_num'].transform('sum')
+            group_keys = [col_cle_cmd, col_produit]
+            max_rab_i_group = df_cmd.groupby(group_keys)['_temp_i_rab'].transform('max')
+            sum_qte_i_group = df_cmd.groupby(group_keys)['__qte_num'].transform('sum')
 
-            # Pré-calculs Col J (Supprimer #7)
+            # Pré-calculs Col J
             max_fact_n1_filled = pd.Series(np.nan, index=df_cmd.index)
             if col_cle_fact and col_cle_fact in df_cmd.columns:
                 n1_mask = df_cmd['_col_N'] == 1
                 df_cmd['_max_fact_n1'] = np.where(n1_mask, df_cmd[col_cle_fact], np.nan)
                 max_fact_n1_filled = df_cmd.groupby(col_cle_cmd)['_max_fact_n1'].transform('max')
 
-            # Pré-calculs Col K (Supprimer #8)
-            sum_qte_k_group = df_cmd.groupby(group_i_keys)['__qte_num'].transform('sum')
+            # Pré-calculs Col K
+            sum_qte_k_group = df_cmd.groupby(group_keys)['__qte_num'].transform('sum')
             has_date_rc = pd.Series(False, index=df_cmd.index)
             if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
                 d_col = df_cmd[col_date_recl_cred]
                 has_date_rc = d_col.notnull() & (d_col.astype(str).str.strip() != "") & (d_col.astype(str) != "NaT") & (d_col.astype(str) != "nan")
-            group_has_date_rc = has_date_rc.groupby(group_i_keys).transform('any')
+            group_has_date_rc = has_date_rc.groupby(group_keys).transform('any')
 
             has_valid_cred = pd.Series(False, index=df_cmd.index)
             if col_cred and col_cred in df_cmd.columns:
                 c_col = df_cmd[col_cred]
                 has_valid_cred = c_col.notnull() & (c_col.astype(str).str.strip() != "") & (c_col.astype(str) != "0") & (c_col.astype(str) != "nan")
-            group_cred_count = has_valid_cred.groupby(group_i_keys).transform('sum')
+            group_cred_count = has_valid_cred.groupby(group_keys).transform('sum')
 
             # --- 5. ÉCRITURE DANS OPENPYXL ---
             for r in range(2, max_row + 1):
@@ -177,11 +177,9 @@ if fichier_upload is not None:
                     d_t = date_fin_arr[idx]
                     val_ab = str(row.get(col_produit, '')).strip()
                     
-                    # Col U : RECHERCHEX S2&T2&AB2
                     code_promo_val = rabais_lookup.get(f"{d_s}{d_t}{val_ab}", "") if (d_s and d_t) else ""
                     code_promo_str = str(code_promo_val).strip() if pd.notnull(code_promo_val) else ""
 
-                    # Col L : Code_de_Promotion de la ligne
                     promo_ligne_val = ""
                     if col_promo_ligne and col_promo_ligne in df_cmd.columns:
                         raw_pl = row.get(col_promo_ligne, '')
@@ -197,27 +195,20 @@ if fichier_upload is not None:
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
                     date_recl = row.get(col_date_recl, None) if col_date_recl else None
                     
-                    # Règle 1 (Col B)
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
-                    
-                    # Règle 2 / Col C
                     val_col_c = cle_cmd if (cle_cmd in cles_reclamees and cle_cmd != "") else ""
                     suppr_d = "Supprimer" if val_col_c != "" else ""
                     
-                    # Règle 3 / Col E
                     cond_suppr_3 = ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
                                      (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan'))
                     suppr_3 = "Supprimer" if cond_suppr_3 else ""
                     
-                    # Règle 4 / Col F & G
                     cond_credit_remplie = (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan')
                     val_col_f = cle_cmd if cond_credit_remplie else ""
                     suppr_g = "Supprimer" if val_col_f != "" else ""
                     
-                    # Règle 5 / Col H
                     suppr_5 = "Supprimer" if qte < 0 else ""
                     
-                    # --- COLONNE I (Supprimer #6) ---
                     suppr_6 = ""
                     is_no_recl = (pd.isnull(date_recl) or str(date_recl).strip() == "" or str(date_recl) == "NaT")
                     if is_no_recl:
@@ -225,7 +216,6 @@ if fichier_upload is not None:
                             if row['_rabais_calc'] < max_rab_i_group.iloc[idx]:
                                 suppr_6 = "Supprimer"
                     
-                    # --- COLONNE J (Supprimer #7) ---
                     suppr_7 = ""
                     val_n = row['_col_N']
                     if val_n == 0:
@@ -235,7 +225,6 @@ if fichier_upload is not None:
                         if col_cle_fact and pd.notnull(row.get(col_cle_fact)) and pd.notnull(m_f) and row.get(col_cle_fact) < m_f:
                             suppr_7 = "Supprimer"
 
-                    # --- COLONNE K (Supprimer #8) ---
                     suppr_8 = ""
                     cond1_k = (sum_qte_k_group.iloc[idx] > 0)
                     cond2_k = group_has_date_rc.iloc[idx]
@@ -244,10 +233,7 @@ if fichier_upload is not None:
                     if cond1_k and cond2_k and cond3_k and cond4_k:
                         suppr_8 = "Supprimer"
 
-                    # --- COLONNE L (Supprimer #9 - Code commence par "FIL") ---
                     suppr_9 = "Supprimer" if promo_ligne_val.upper().startswith("FIL") else ""
-
-                    # Règle 10 / Col M
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
                     rabais_entre_2_dates = row['_rabais_calc']
@@ -290,7 +276,7 @@ if fichier_upload is not None:
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement instantané et terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement par nom de colonnes terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
