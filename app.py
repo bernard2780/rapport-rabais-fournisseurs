@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Analyse sécurisée et transparente des colonnes en cours...")
+    st.info(f"Vérification rigoureuse des en-têtes exacts en cours...")
     
     wb = openpyxl.load_workbook(fichier_upload, data_only=False)
     
@@ -33,53 +33,45 @@ if fichier_upload is not None:
         df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
         df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
         
-        # Nettoyage strict des en-têtes
+        # Nettoyage strict des en-têtes (suppression des espaces invisibles de fin/début)
         df_cmd.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_cmd.columns]
         df_rabais.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_rabais.columns]
         
         max_row = ws_cmd.max_row
         tolerance = 10
         
-        # --- DÉTECTION SÉCURISÉE DE LA CLÉ COMMANDE ---
-        col_cle_cmd = None
-        for col in df_cmd.columns:
-            c_low = col.lower().replace('_', ' ')
-            if ('cle' in c_low or 'clé' in c_low) and 'commande' in c_low:
-                col_cle_cmd = col
-                break
+        # --- DÉFINITION STRICTE DES EN-TÊTES EXACTS ---
+        col_cle_cmd = 'Clé_unique_détail_commande'
+        col_montant = 'Montant_ST'
+        col_promo_ligne = 'Code promotion'
         
-        if not col_cle_cmd:
-            st.error(f"❌ Colonne de commande introuvable. Colonnes présentes : {list(df_cmd.columns)}")
+        # Détection des autres colonnes indispensables ou de secours
+        col_produit = 'No_Produit' if 'No_Produit' in df_cmd.columns else ('# Produit' if '# Produit' in df_cmd.columns else df_cmd.columns[1])
+        col_qte = 'Qté_commandée' if 'Qté_commandée' in df_cmd.columns else df_cmd.columns[2]
+
+        # --- CONTRÔLE DE SÉCURITÉ ABSOLU ---
+        colonnes_manquantes = []
+        if col_cle_cmd not in df_cmd.columns: colonnes_manquantes.append(col_cle_cmd)
+        if col_montant not in df_cmd.columns: colonnes_manquantes.append(col_montant)
+        if col_promo_ligne not in df_cmd.columns: colonnes_manquantes.append(col_promo_ligne)
+        
+        if colonnes_manquantes:
+            st.error(f"""
+            ❌ **Erreur d'en-tête critique !**
+            
+            Les en-têtes exacts suivants sont introuvables dans votre onglet 'Rabais fournisseurs' :
+            `{colonnes_manquantes}`
+            
+            📋 **Voici la liste exacte de TOUTES les colonnes lues dans votre fichier :**
+            `{list(df_cmd.columns)}`
+            """)
             st.stop()
 
-        # --- DÉTECTION PRÉCISE DES COLONNES L ET M (PROMO ET MONTANT) ---
-        col_produit = next((c for c in df_cmd.columns if 'produit' in c.lower()), df_cmd.columns[1])
-        col_qte = next((c for c in df_cmd.columns if 'qté' in c.lower() or 'qte' in c.lower()), df_cmd.columns[2])
-        
-        # Recherche robuste du Montant (on cherche en priorité 'montant' ou 'st' isolé, pas au milieu d'un mot)
-        col_montant = None
-        for col in df_cmd.columns:
-            c_low = col.lower()
-            if 'montant' in c_low or c_low == 'st' or 'montant_st' in c_low or 'montant st' in c_low:
-                col_montant = col
-                break
-        if not col_montant:
-            col_montant = df_cmd.columns[3] # Sécurité de secours
-
-        # Recherche robuste de la Promotion (Colonne L / suppr_9)
-        col_promo_ligne = None
-        for col in df_cmd.columns:
-            c_low = col.lower()
-            if 'promo' in c_low or 'promotion' in c_low:
-                col_promo_ligne = col
-                break
-
-        # Affichage transparent des en-têtes critiques détectés pour votre contrôle
         st.success(f"""
-        ✅ **Colonnes critiques validées pour vos réclamations :**
+        ✅ **En-têtes stricts validés :**
         - Clé de commande : **{col_cle_cmd}**
-        - Montant (Col. M) : **{col_montant}**
-        - Promotion (Col. L) : **{col_promo_ligne if col_promo_ligne else '⚠️ Non détectée (laisser vide ou vérifier le nom)'}**
+        - Montant : **{col_montant}**
+        - Code promotion : **{col_promo_ligne}**
         """)
 
         # Recherche des autres colonnes optionnelles
@@ -204,10 +196,9 @@ if fichier_upload is not None:
                 code_promo_str = str(code_promo_val).strip() if pd.notnull(code_promo_val) else ""
 
                 promo_ligne_val = ""
-                if col_promo_ligne and col_promo_ligne in df_cmd.columns:
-                    raw_pl = row.get(col_promo_ligne, '')
-                    if pd.notnull(raw_pl) and str(raw_pl).strip().lower() != 'nan':
-                        promo_ligne_val = str(raw_pl).strip()
+                raw_pl = row.get(col_promo_ligne, '')
+                if pd.notnull(raw_pl) and str(raw_pl).strip().lower() != 'nan':
+                    promo_ligne_val = str(raw_pl).strip()
 
                 cle_cmd = str(row.get(col_cle_cmd, ''))
                 if cle_cmd == 'nan' or not cle_cmd: cle_cmd = ""
@@ -299,7 +290,7 @@ if fichier_upload is not None:
         timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
         nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
         
-        st.success(f"Traitement rigoureux et transparent terminé avec succès ! ({max_row - 1} lignes traitées)")
+        st.success(f"Traitement rigoureux terminé avec succès ! ({max_row - 1} lignes traitées)")
         
         if st.download_button(
             label=f"📥 Télécharger le rapport ({nom_fichier})",
