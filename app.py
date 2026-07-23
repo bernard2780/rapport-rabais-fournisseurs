@@ -125,14 +125,22 @@ if fichier_upload is not None:
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
                     date_recl = row.get('Date_Réclamée', None)
                     
-                    # --- ÉVALUATION DES SUPPRESSIONS (B À M) ---
+                    # --- ÉVALUATION DES COLONNES DE SUPPRESSION ET DE VALEUR ---
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
-                    suppr_2 = "Supprimer" if cle_cmd in cles_reclamees else ""
-                    suppr_d = "Supprimer" if suppr_2 == "Supprimer" else ""
+                    
+                    # Colonne C (Col 3) : Contient la valeur de la clé si elle est réclamée, sinon vide
+                    val_col_c = cle_cmd if cle_cmd in cles_reclamees and cle_cmd != '' and cle_cmd != 'nan' else ""
+                    suppr_2 = val_col_c  # Utilisé pour le test global si non vide
+                    suppr_d = "Supprimer" if val_col_c != "" else ""
+                    
                     suppr_3 = "Supprimer" if ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
                                                (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan')) else ""
-                    suppr_4 = "Supprimer" if (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan') else ""
-                    suppr_g = "Supprimer" if suppr_4 == "Supprimer" else ""
+                    
+                    # Colonne F (Col 6) : Contient la valeur de la facture si créditée, sinon vide
+                    val_col_f = cle_fact if (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan') else ""
+                    suppr_4 = val_col_f  # Utilisé pour le test global si non vide
+                    suppr_g = "Supprimer" if val_col_f != "" else ""
+                    
                     suppr_5 = "Supprimer" if qte < 0 else ""
                     
                     # Colonne I (Supprimer #6)
@@ -160,32 +168,25 @@ if fichier_upload is not None:
                             if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
                                 suppr_7 = "Supprimer"
 
-                    # --- COLONNE K (Supprimer #8 - Traduction 100% exacte de la formule Excel) ---
+                    # Colonne K (Supprimer #8)
                     suppr_8 = ""
                     mask_k = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['No_Produit'].astype(str) == str(prod))
                     sub_k = df_cmd[mask_k]
                     
                     if not sub_k.empty:
-                        # 1. SOMME.SI.ENS(Qté_commandée, ...) > 0
                         cond1 = (sub_k['Qté_commandée'].sum() > 0)
-                        
-                        # 2. SOMME.SI.ENS(Date_réclamé_détail_crédité, ...) <> ""
                         cond2 = False
                         if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
                             d_col = sub_k[col_date_recl_cred]
-                            # Vérifie s'il y a au moins une date valide (non vide, non NaT, non nan) dans le groupe
                             valid_dates = d_col.notnull() & (d_col.astype(str).str.strip() != "") & (d_col.astype(str) != "NaT") & (d_col.astype(str) != "nan")
                             cond2 = valid_dates.any()
                             
-                        # 3. SOMME.SI.ENS(Clé_unique_détail_crédité, ...) = 0 (en Excel, sommer du texte retourne 0, donc aucun crédit actif dans le groupe)
                         cond3 = True
                         if col_cred and col_cred in df_cmd.columns:
                             c_col = sub_k[col_cred]
                             valid_creds = c_col.notnull() & (c_col.astype(str).str.strip() != "") & (c_col.astype(str) != "0") & (c_col.astype(str) != "nan")
-                            # Si le nombre de crédits valides dans le groupe est 0, alors la somme est 0
                             cond3 = (valid_creds.sum() == 0)
                             
-                        # 4. Montant_ST < 0,99 (pour la ligne actuelle)
                         cond4 = (montant_st < 0.99)
                         
                         if cond1 and cond2 and cond3 and cond4:
@@ -205,17 +206,17 @@ if fichier_upload is not None:
                     indicateur_tolerance = 0
                     val_col_n = row['_col_N']
                     
-                    # --- SUPPRIMER TOTAL (Col A) ---
-                    tous_criteres = [suppr_1, suppr_2, suppr_d, suppr_3, suppr_4, suppr_g, suppr_5, suppr_6, suppr_7, suppr_8, suppr_9, suppr_10]
+                    # --- SUPPRIMER TOTAL (Col A) : Basé sur les critères actifs ---
+                    tous_criteres = [suppr_1, suppr_d, suppr_3, suppr_g, suppr_5, suppr_6, suppr_7, suppr_8, suppr_9, suppr_10]
                     suppr_total = "Supprimer" if any(c == "Supprimer" for c in tous_criteres) else ""
                     
                     # --- ÉCRITURE DANS LE CLASSEUR EXCEL ---
                     ws_cmd.cell(row=r, column=1).value = suppr_total
                     ws_cmd.cell(row=r, column=2).value = suppr_1
-                    ws_cmd.cell(row=r, column=3).value = suppr_2
+                    ws_cmd.cell(row=r, column=3).value = val_col_c  # Col C (Valeur de la clé au lieu de Supprimer)
                     ws_cmd.cell(row=r, column=4).value = suppr_d
                     ws_cmd.cell(row=r, column=5).value = suppr_3
-                    ws_cmd.cell(row=r, column=6).value = suppr_4
+                    ws_cmd.cell(row=r, column=6).value = val_col_f  # Col F (Valeur de la facture au lieu de Supprimer)
                     ws_cmd.cell(row=r, column=7).value = suppr_g
                     ws_cmd.cell(row=r, column=8).value = suppr_5
                     ws_cmd.cell(row=r, column=9).value = suppr_6
