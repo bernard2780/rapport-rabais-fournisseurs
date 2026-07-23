@@ -45,12 +45,17 @@ if fichier_upload is not None:
             df_cmd['Montant_ST'] = pd.to_numeric(df_cmd['Montant_ST'], errors='coerce').fillna(0)
             df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
             
-            # --- IDENTIFICATION DYNAMIQUE DES COLONNES CLÉS ---
+            # --- IDENTIFICATION DES COLONNES CLÉS ---
             col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'clé' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'clé' in str(c).lower() for c in df_cmd.columns) else None)
             col_date_recl_cred = 'Date_réclamé_détail_credité' if 'Date_réclamé_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'date' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'date' in str(c).lower() for c in df_cmd.columns) else None)
             
-            # Détection automatique de la colonne de promotion (cherche "promotion" ou "promo" dans les en-têtes)
-            col_promo = next((c for c in df_cmd.columns if 'promo' in str(c).lower()), 'Code_promotion' if 'Code_promotion' in df_cmd.columns else None)
+            col_promo = None
+            for candidate in ['Code_de_Promotion', 'Code_promotion', 'Code promotion', 'Code de Promotion']:
+                if candidate in df_cmd.columns:
+                    col_promo = candidate
+                    break
+            if not col_promo:
+                col_promo = next((c for c in df_cmd.columns if 'promo' in str(c).lower()), None)
             
             # --- INDEXATION DES CLÉS GLOBALES ---
             cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '') & (df_cmd['Date_Réclamée'].astype(str) != 'NaT')]['Clé_unique_détail_commande'].dropna().astype(str))
@@ -109,7 +114,6 @@ if fichier_upload is not None:
                     qte = row.get('Qté_commandée', 0)
                     montant_st = row.get('Montant_ST', 0)
                     
-                    # --- RÉCUPÉRATION EXACTE DU CODE DE PROMOTION (Équivalent CHERCHE("FIL", ...) = 1) ---
                     code_promo = ""
                     if col_promo and col_promo in df_cmd.columns:
                         raw_promo = row.get(col_promo, '')
@@ -156,20 +160,23 @@ if fichier_upload is not None:
                             if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
                                 suppr_7 = "Supprimer"
 
-                    # Colonne K (Supprimer #8)
+                    # --- COLONNE K (Supprimer #8 - Traduction exacte de votre formule SOMME.SI.ENS) ---
                     suppr_8 = ""
                     mask_k = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['No_Produit'].astype(str) == str(prod))
                     sub_k = df_cmd[mask_k]
                     
                     if not sub_k.empty:
+                        # Condition 1 : SOMME.SI.ENS(Qté_commandée, ...) > 0
                         cond1_qte_nette = (sub_k['Qté_commandée'].sum() > 0)
                         
+                        # Condition 2 : SOMME.SI.ENS(Date_réclamé_détail_crédité, ...) <> ""
                         if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
                             d_rc = sub_k[col_date_recl_cred]
                             cond2_date_recl = (d_rc.notnull() & (d_rc.astype(str).str.strip() != "") & (d_rc.astype(str) != "NaT") & (d_rc.astype(str) != "nan")).any()
                         else:
                             cond2_date_recl = False
                             
+                        # Condition 3 : SOMME.SI.ENS(Clé_unique_détail_crédité, ...) = 0 (Aucune clé de crédit active dans le groupe)
                         if col_cred and col_cred in df_cmd.columns:
                             c_cr = sub_k[col_cred]
                             valid_c = c_cr.notnull() & (c_cr.astype(str).str.strip() != "") & (c_cr.astype(str) != "0") & (c_cr.astype(str) != "nan")
@@ -177,16 +184,15 @@ if fichier_upload is not None:
                         else:
                             cond3_cle_absent = True
                             
+                        # Condition 4 : Montant_ST < 0,99
                         cond4_montant = (montant_st < 0.99)
                         
                         if cond1_qte_nette and cond2_date_recl and cond3_cle_absent and cond4_montant:
                             suppr_8 = "Supprimer"
 
-                    # --- COLONNE L (Supprimer #9 - Équivalent CHERCHE("FIL", code) = 1) ---
+                    # Colonne L (Supprimer #9)
                     suppr_9 = ""
-                    # On cherche "FIL" (insensible à la casse) et on vérifie qu'il est en position de départ (index 0 / position 1)
-                    pos_fil = code_promo.upper().find("FIL")
-                    if pos_fil == 0:  # 0 en Python correspond exactement à la position 1 dans CHERCHE d'Excel
+                    if code_promo.upper().startswith("FIL"):
                         suppr_9 = "Supprimer"
 
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
