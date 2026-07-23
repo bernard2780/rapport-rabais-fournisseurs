@@ -4,6 +4,7 @@ import openpyxl
 import io
 import numpy as np
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # 1. CONFIGURATION DE LA PAGE WEB
 st.set_page_config(page_title="Générateur de Rapport", layout="wide")
@@ -13,8 +14,8 @@ if 'version_compteur' not in st.session_state:
 
 st.title(f"Générateur de Rapport : Rabais Fournisseurs (v{st.session_state.version_compteur})")
 
-date_heure_actuelle = datetime.now().strftime("%Y-%m-%d à %H:%M:%S")
-st.caption(f"📅 Génération du rapport — Date et heure actuelles : {date_heure_actuelle}")
+montreal_time = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y-%m-%d à %H:%M:%S")
+st.caption(f"📅 Génération du rapport — Heure de Montréal : {montreal_time}")
 
 st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 
@@ -22,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement complet (Version {st.session_state.version_compteur}) en cours...")
+    st.info(f"Traitement complet et rigoureux (Version {st.session_state.version_compteur}) en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -38,11 +39,13 @@ if fichier_upload is not None:
             
             max_row = ws_cmd.max_row
             
+            # --- IDENTIFICATION DES COLONNES DE CRÉDIT ---
+            col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'clé' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'clé' in str(c).lower() for c in df_cmd.columns) else None)
+            col_date_recl_cred = 'Date_réclamé_détail_credité' if 'Date_réclamé_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower() and 'date' in str(c).lower()][0] if any('crédit' in str(c).lower() and 'date' in str(c).lower() for c in df_cmd.columns) else None)
+            
             # --- INDEXATION GLOBALE ET PRÉ-CALCULS ---
             cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'] != 'NaT') & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '')]['Clé_unique_détail_commande'].dropna())
             cles_facture = set(df_cmd['Clé_unique_détail_facture'].dropna().astype(str)) if 'Clé_unique_détail_facture' in df_cmd.columns else set()
-            
-            col_cred = 'Clé_unique_détail_credité' if 'Clé_unique_détail_credité' in df_cmd.columns else ([c for c in df_cmd.columns if 'crédit' in str(c).lower()][0] if any('crédit' in str(c).lower() for c in df_cmd.columns) else None)
             cles_credite = set(df_cmd[col_cred].dropna().astype(str)) if col_cred else set()
             
             prod_col = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
@@ -83,7 +86,6 @@ if fichier_upload is not None:
             for cle_cmd, group in df_cmd.groupby('Clé_unique_détail_commande'):
                 if str(cle_cmd).strip() != '' and str(cle_cmd) != 'nan':
                     max_rab = group['_rabais_calc'].max()
-                    # Les lignes qui ont ce rabais max obtiennent 1, les autres 0
                     indices_max = group[group['_rabais_calc'] == max_rab].index
                     df_cmd.loc[indices_max, '_col_N'] = 1
 
@@ -105,7 +107,8 @@ if fichier_upload is not None:
                     cle_fact = str(row.get('Clé_unique_détail_facture', '')) if pd.notnull(row.get('Clé_unique_détail_facture', '')) else ''
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
                     date_recl = row.get('Date_Réclamée', None)
-                    date_recl_cred = row.get('Date_réclamé_détail_credité', None) if 'Date_réclamé_détail_credité' in df_cmd.columns else None
+                    
+                    date_recl_cred_val = row.get(col_date_recl_cred, None) if col_date_recl_cred else None
                     
                     # --- ÉVALUATION DE CHAQUE COLONNE DE SUPPRESSION (B À M) ---
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
@@ -117,7 +120,7 @@ if fichier_upload is not None:
                     suppr_g = "Supprimer" if suppr_4 == "Supprimer" else ""
                     suppr_5 = "Supprimer" if qte < 0 else ""
                     
-                    # Col I (Supprimer #6)
+                    # Colonne I (Supprimer #6)
                     suppr_6 = ""
                     is_no_recl = (pd.isnull(date_recl) or str(date_recl).strip() == "" or str(date_recl) == "NaT")
                     if is_no_recl:
@@ -131,13 +134,12 @@ if fichier_upload is not None:
                             if row['_rabais_calc'] < max_rabais_group:
                                 suppr_6 = "Supprimer"
                     
-                    # --- COLONNE J (Supprimer #7) ---
+                    # Colonne J (Supprimer #7)
                     suppr_7 = ""
                     val_n = row['_col_N']
                     if val_n == 0:
                         suppr_7 = "Supprimer"
                     else:
-                        # Si N=1, vérifier si cette ligne a la plus grande Clé_unique_détail_facture parmi les lignes N=1 de la même commande
                         mask_n1 = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['_col_N'] == 1)
                         sub_n1 = df_cmd[mask_n1]
                         if not sub_n1.empty:
@@ -145,8 +147,19 @@ if fichier_upload is not None:
                             if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
                                 suppr_7 = "Supprimer"
 
-                    has_date_recl_cred = pd.notnull(date_recl_cred) and str(date_recl_cred).strip() != "" and str(date_recl_cred) != "NaT"
-                    suppr_8 = "Supprimer" if (qte > 0 and has_date_recl_cred and (cle_cred_val == '' or cle_cred_val == 'nan' or cle_cred_val == '0') and montant_st < 0.99) else ""
+                    # --- COLONNE K (Supprimer #8) ---
+                    suppr_8 = ""
+                    # 1. Calcul de la quantité nette (somme des quantités pour la même clé commande + même produit)
+                    mask_qte_net = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['No_Produit'].astype(str) == str(prod))
+                    qte_nette = df_cmd[mask_qte_net]['Qté_commandée'].sum()
+                    
+                    # 2. Vérification des conditions : Qté nette > 0, date réclamation crédit non vide, clé crédit vide/0/absente, montant < 0.99
+                    has_date_recl_cred = pd.notnull(date_recl_cred_val) and str(date_recl_cred_val).strip() != "" and str(date_recl_cred_val) != "NaT" and str(date_recl_cred_val) != "nan"
+                    is_cle_cred_absent = (cle_cred_val == '' or cle_cred_val == 'nan' or cle_cred_val == '0' or cle_cred_val is None)
+                    
+                    if qte_nette > 0 and has_date_recl_cred and is_cle_cred_absent and montant_st < 0.99:
+                        suppr_8 = "Supprimer"
+
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
@@ -176,21 +189,21 @@ if fichier_upload is not None:
                     ws_cmd.cell(row=r, column=12).value = suppr_9
                     ws_cmd.cell(row=r, column=13).value = suppr_10
                     
-                    ws_cmd.cell(row=r, column=14).value = val_col_n          # N: Rabais maximum offert
-                    ws_cmd.cell(row=r, column=15).value = rabais_total      # O: Rabais total
-                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates # P: Rabais entre 2 date
+                    ws_cmd.cell(row=r, column=14).value = val_col_n          # N
+                    ws_cmd.cell(row=r, column=15).value = rabais_total      # O
+                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates # P
                     ws_cmd.cell(row=r, column=17).value = indicateur_tolerance # Q
                     ws_cmd.cell(row=r, column=18).value = tolerance         # R
                     ws_cmd.cell(row=r, column=22).value = ecart             # V
             
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
-            output_buffer.seek(0)
+            output_buffer.seek(0, 0)
             
-            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M")
+            timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement complet terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
