@@ -242,7 +242,8 @@ if fichier_upload is not None:
                     if date_fin_arr[idx]:
                         ws_cmd.cell(row=r, column=20).value = date_fin_arr[idx]
                         
-                    ws_cmd.cell(row=r, column=22).value = ecart
+                    ws_cmd.cell(row=r, column=21).value = code_promo  # Col U : Code promotion
+                    ws_cmd.cell(row=r, column=22).value = ecart      # Col V : Écart
             
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
