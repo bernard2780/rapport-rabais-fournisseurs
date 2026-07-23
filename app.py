@@ -3,8 +3,15 @@ import pandas as pd
 import openpyxl
 import io
 import numpy as np
+import unicodedata
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+# Fonction pour normaliser les textes (supprime les accents et met en minuscules pour éviter tout conflit)
+def normaliser(texte):
+    if pd.isna(texte):
+        return ""
+    return ''.join(c for c in unicodedata.normalize('NFD', str(texte)) if unicodedata.category(c) != 'Mn').lower().replace('_', ' ').strip()
 
 # 1. CONFIGURATION DE LA PAGE WEB
 st.set_page_config(page_title="Générateur de Rapport", layout="wide")
@@ -34,36 +41,37 @@ if fichier_upload is not None:
             df_cmd = pd.read_excel(fichier_upload, sheet_name='Rabais fournisseurs')
             df_rabais = pd.read_excel(fichier_upload, sheet_name='Rabais entre 2 dates')
             
-            # --- NETTOYAGE UNIVERSEL DES EN-TÊTES (Supprime BOM, espaces insécables, etc.) ---
-            def clean_col_name(c):
-                if pd.isna(c): return ""
-                return str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip()
-
-            df_cmd.columns = [clean_col_name(c) for c in df_cmd.columns]
-            df_rabais.columns = [clean_col_name(c) for c in df_rabais.columns]
+            # Nettoyage des en-têtes
+            df_cmd.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_cmd.columns]
+            df_rabais.columns = [str(c).replace('\ufeff', '').replace('\u00a0', ' ').strip() for c in df_rabais.columns]
             
             max_row = ws_cmd.max_row
             tolerance = 10
             
-            # --- RECHERCHE FLEXIBLE ET SÉCURISÉE ---
+            # --- RECHERCHE INTELLIGENTE INVARIABLE AUX ACCENTS ---
             def trouver_colonne(mots_cles):
                 for col in df_cmd.columns:
-                    col_lower = col.lower()
-                    if all(m.lower() in col_lower for m in mots_cles):
+                    col_norm = normaliser(col)
+                    if all(normaliser(m) in col_norm for m in mots_cles):
                         return col
                 return None
 
-            # Recherche par mots-clés indépendante de la casse et des caractères invisibles
-            col_cle_cmd = trouver_colonne(['clé_unique', 'commande']) or trouver_colonne(['clé', 'commande']) or df_cmd.columns[2]
+            # Recherche insensible aux accents (ex: "cle" ou "clé" fonctionnera de la même manière)
+            col_cle_cmd = trouver_colonne(['cle', 'commande']) or df_cmd.columns[2]
             col_produit = trouver_colonne(['produit']) or df_cmd.columns[1]
-            col_qte = trouver_colonne(['qté', 'commandée']) or trouver_colonne(['qte']) or df_cmd.columns[4]
+            col_qte = trouver_colonne(['qte']) or trouver_colonne(['quantite']) or df_cmd.columns[4]
             col_montant = trouver_colonne(['montant', 'st']) or df_cmd.columns[5]
             col_date_fact = trouver_colonne(['date', 'facture'])
-            col_date_recl = trouver_colonne(['réclamée']) or trouver_colonne(['reclamée'])
+            col_date_recl = trouver_colonne(['reclamée']) or trouver_colonne(['reklamee'])
             col_cle_fact = trouver_colonne(['facture'])
-            col_cred = trouver_colonne(['crédit', 'clé']) or trouver_colonne(['credit'])
-            col_date_recl_cred = trouver_colonne(['crédit', 'date'])
-            col_promo_ligne = trouver_colonne(['code', 'promotion']) or trouver_colonne(['promotion'])
+            col_cred = trouver_colonne(['credit', 'cle'])
+            col_date_recl_cred = trouver_colonne(['credit', 'date'])
+            col_promo_ligne = trouver_colonne(['promotion']) or trouver_colonne(['promo'])
+
+            # Sécurité : si la clé commande ne se trouve vraiment pas, affichage des colonnes lues
+            if not col_cle_cmd or col_cle_cmd not in df_cmd.columns:
+                st.error(f"Impossible de lier la colonne de commande. Voici les colonnes exactes lues dans votre fichier :\n\n {list(df_cmd.columns)}")
+                st.stop()
 
             # Nettoyage des types numériques et dates
             df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0)
@@ -76,8 +84,8 @@ if fichier_upload is not None:
 
             # --- 1. CALCUL DES RABAIS ENTRE 2 DATES ---
             prod_col_rab = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
-            debut_col = next((c for c in df_rabais.columns if 'début' in c.lower()), df_rabais.columns[7])
-            fin_col = next((c for c in df_rabais.columns if 'échéance' in c.lower() or 'fin' in c.lower()), df_rabais.columns[8])
+            debut_col = next((c for c in df_rabais.columns if 'début' in c.lower() or 'debut' in c.lower()), df_rabais.columns[7])
+            fin_col = next((c for c in df_rabais.columns if 'échéance' in c.lower() or 'echeance' in c.lower() or 'fin' in c.lower()), df_rabais.columns[8])
             rabais_col = next((c for c in df_rabais.columns if 'rabais' in c.lower()), df_rabais.columns[11])
             
             df_rabais[debut_col] = pd.to_datetime(df_rabais[debut_col], errors='coerce')
@@ -137,21 +145,19 @@ if fichier_upload is not None:
             series_cred = df_cmd[col_cred] if col_cred and col_cred in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_credite = set(series_cred.dropna().astype(str))
 
-            # Pré-calculs Col I
+            group_keys = [col_cle_cmd, col_produit] if col_produit else [col_cle_cmd]
+
             is_no_recl_mask = series_date_recl.isnull() | (series_date_recl.astype(str).str.strip() == "") | (series_date_recl.astype(str) == "NaT")
             df_cmd['_temp_i_rab'] = np.where(is_no_recl_mask, df_cmd['_rabais_calc'], -np.inf)
-            group_keys = [col_cle_cmd, col_produit]
             max_rab_i_group = df_cmd.groupby(group_keys)['_temp_i_rab'].transform('max')
             sum_qte_i_group = df_cmd.groupby(group_keys)['__qte_num'].transform('sum')
 
-            # Pré-calculs Col J
             max_fact_n1_filled = pd.Series(np.nan, index=df_cmd.index)
             if col_cle_fact and col_cle_fact in df_cmd.columns:
                 n1_mask = df_cmd['_col_N'] == 1
                 df_cmd['_max_fact_n1'] = np.where(n1_mask, df_cmd[col_cle_fact], np.nan)
                 max_fact_n1_filled = df_cmd.groupby(col_cle_cmd)['_max_fact_n1'].transform('max')
 
-            # Pré-calculs Col K
             sum_qte_k_group = df_cmd.groupby(group_keys)['__qte_num'].transform('sum')
             has_date_rc = pd.Series(False, index=df_cmd.index)
             if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
@@ -175,7 +181,7 @@ if fichier_upload is not None:
                     
                     d_s = date_deb_arr[idx]
                     d_t = date_fin_arr[idx]
-                    val_ab = str(row.get(col_produit, '')).strip()
+                    val_ab = str(row.get(col_produit, '')).strip() if col_produit else ""
                     
                     code_promo_val = rabais_lookup.get(f"{d_s}{d_t}{val_ab}", "") if (d_s and d_t) else ""
                     code_promo_str = str(code_promo_val).strip() if pd.notnull(code_promo_val) else ""
