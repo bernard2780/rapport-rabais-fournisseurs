@@ -13,7 +13,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info("Traitement et application des règles en cours...")
+    st.info("Traitement et application de l'ensemble des règles de suppression en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -29,7 +29,7 @@ if fichier_upload is not None:
             
             max_row = ws_cmd.max_row
             
-            # Indexation et préparation des données de référence
+            # --- INDEXATION DES CLÉS ET DONNÉES GLOBALES ---
             cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'] != 'NaT') & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '')]['Clé_unique_détail_commande'].dropna())
             cles_facture = set(df_cmd['Clé_unique_détail_facture'].dropna())
             cles_credite = set(df_cmd['Clé_unique_détail_credité'].dropna()) if 'Clé_unique_détail_credité' in df_cmd.columns else set()
@@ -44,7 +44,7 @@ if fichier_upload is not None:
             df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
             rabais_par_produit = df_rabais.groupby(prod_col)
             
-            # Boucle de traitement ligne par ligne
+            # --- BOUCLE LIGNE PAR LIGNE ---
             for r in range(2, max_row + 1):
                 idx = r - 2
                 if idx < len(df_cmd):
@@ -62,21 +62,46 @@ if fichier_upload is not None:
                     date_recl_cred = row.get('Date_réclamé_détail_credité', None) if 'Date_réclamé_détail_credité' in df_cmd.columns else None
                     tolerance = 10
                     
-                    # Application des critères de suppression (Colonnes B à M)
+                    # ----------------------------------------------------
+                    # APPLICATION DES RÈGLES DE SUPPRESSION (COLONNES B À M)
+                    # ----------------------------------------------------
+                    # Supprimer #1 (Col B) : S'il y a une Date_Réclamée
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
+                    
+                    # Supprimer #2 (Col C) : Si Date_Réclamée trouvée pour cette clé de commande
                     suppr_2 = "Supprimer" if cle_cmd in cles_reclamees else ""
+                    
+                    # Colonne D : Doublon de clé réclamée
                     suppr_d = "Supprimer" if suppr_2 == "Supprimer" else ""
-                    suppr_3 = "Supprimer" if (cle_cred in cles_facture or cle_fact in cles_credite) and (str(cle_cred) != "" or str(cle_fact) != "") else ""
-                    suppr_4 = "Supprimer" if cle_fact in cles_credite and str(cle_fact) != "" else ""
+                    
+                    # Supprimer #3 (Col E) : Correspondance croisée crédit / facture
+                    suppr_3 = "Supprimer" if (str(cle_cred) in cles_facture or str(cle_fact) in cles_credite) and (str(cle_cred) != "" or str(cle_fact) != "") else ""
+                    
+                    # Supprimer #4 (Col F) : Si la Clé_unique_détail_facture est trouvée dans la Clé_unique_détail_crédité
+                    suppr_4 = "Supprimer" if str(cle_fact) in cles_credite and str(cle_fact) != "" else ""
+                    
+                    # Colonne G : Doublon de colonne F
                     suppr_g = "Supprimer" if suppr_4 == "Supprimer" else ""
+                    
+                    # Supprimer #5 (Col H) : Quantité commandée négative
                     suppr_5 = "Supprimer" if qte < 0 else ""
+                    
+                    # Supprimer #6 (Col I) : Quantité positive sans réclamation (vérification montant)
                     suppr_6 = "" 
+                    
+                    # Supprimer #7 (Col J) : Validation du rabais maximal et de la facture la plus grande
                     suppr_7 = ""
-                    suppr_8 = "Supprimer" if qte > 0 and pd.notnull(date_recl_cred) and str(date_recl_cred).strip() != "" and montant_st < 0.99 else ""
+                    
+                    # Supprimer #8 (Col K) : Quantité > 0, date réclamation crédit non vide, montant < 0,99
+                    suppr_8 = "Supprimer" if qte > 0 and pd.notnull(date_recl_cred) and str(date_recl_cred).strip() != "" and str(date_recl_cred) != "NaT" and montant_st < 0.99 else ""
+                    
+                    # Supprimer #9 (Col L) : Code promo commence par "FIL"
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
+                    
+                    # Supprimer #10 (Col M) : Montant_ST < 0,99
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
-                    # Calculs financiers et temporels
+                    # --- CALCULS FINANCIERS ET TEMPORELS ---
                     rabais_entre_2_dates = 0
                     date_debut_retenue = ""
                     date_fin_retenue = ""
@@ -109,7 +134,7 @@ if fichier_upload is not None:
                     tous_criteres = [suppr_1, suppr_2, suppr_d, suppr_3, suppr_4, suppr_g, suppr_5, suppr_6, suppr_7, suppr_8, suppr_9, suppr_10]
                     suppr_total = "Supprimer" if any(c == "Supprimer" for c in tous_criteres) else ""
                     
-                    # Écriture dans le fichier Excel
+                    # --- ÉCRITURE DANS LE CLASSEUR EXCEL ---
                     ws_cmd.cell(row=r, column=1).value = suppr_total
                     ws_cmd.cell(row=r, column=2).value = suppr_1
                     ws_cmd.cell(row=r, column=3).value = suppr_2
@@ -140,10 +165,10 @@ if fichier_upload is not None:
             wb.save(output_buffer)
             output_buffer.seek(0)
             
-            st.success(f"Traitement terminé ! {max_row - 1} lignes traitées.")
+            st.success(f"Traitement complet terminé ! {max_row - 1} lignes traitées.")
             
             st.download_button(
-                label="📥 Télécharger le rapport final (Excel)",
+                label="📥 Télécharger le rapport final mis à jour (Excel)",
                 data=output_buffer,
                 file_name="Rapport_Rabais_Final.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -152,4 +177,4 @@ if fichier_upload is not None:
             st.error("Les onglets requis sont introuvables.")
             
     except Exception as e:
-        st.error(f"Une erreur s'est produite : {e}")
+        st.error(f"Une erreur s'est produite lors du traitement : {e}")
