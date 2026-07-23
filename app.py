@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Analyse sécurisée des colonnes en cours...")
+    st.info(f"Analyse sécurisée et transparente des colonnes en cours...")
     
     wb = openpyxl.load_workbook(fichier_upload, data_only=False)
     
@@ -40,7 +40,7 @@ if fichier_upload is not None:
         max_row = ws_cmd.max_row
         tolerance = 10
         
-        # --- RECHERCHE SOUPLE ET INFAILLIBLE DE LA COLONNE CLÉ COMMANDE ---
+        # --- DÉTECTION SÉCURISÉE DE LA CLÉ COMMANDE ---
         col_cle_cmd = None
         for col in df_cmd.columns:
             c_low = col.lower().replace('_', ' ')
@@ -49,27 +49,45 @@ if fichier_upload is not None:
                 break
         
         if not col_cle_cmd:
-            st.error(f"""
-            ❌ **Colonne de commande introuvable.**
-            
-            Voici la liste exacte de toutes les colonnes détectées dans votre fichier Excel :
-            `{list(df_cmd.columns)}`
-            """)
+            st.error(f"❌ Colonne de commande introuvable. Colonnes présentes : {list(df_cmd.columns)}")
             st.stop()
-            
-        st.success(f"✅ Colonne de commande détectée avec succès : **{col_cle_cmd}**")
 
-        # Recherche des autres colonnes indispensables
+        # --- DÉTECTION PRÉCISE DES COLONNES L ET M (PROMO ET MONTANT) ---
         col_produit = next((c for c in df_cmd.columns if 'produit' in c.lower()), df_cmd.columns[1])
         col_qte = next((c for c in df_cmd.columns if 'qté' in c.lower() or 'qte' in c.lower()), df_cmd.columns[2])
-        col_montant = next((c for c in df_cmd.columns if 'montant' in c.lower() or 'st' in c.lower()), df_cmd.columns[3])
         
+        # Recherche robuste du Montant (on cherche en priorité 'montant' ou 'st' isolé, pas au milieu d'un mot)
+        col_montant = None
+        for col in df_cmd.columns:
+            c_low = col.lower()
+            if 'montant' in c_low or c_low == 'st' or 'montant_st' in c_low or 'montant st' in c_low:
+                col_montant = col
+                break
+        if not col_montant:
+            col_montant = df_cmd.columns[3] # Sécurité de secours
+
+        # Recherche robuste de la Promotion (Colonne L / suppr_9)
+        col_promo_ligne = None
+        for col in df_cmd.columns:
+            c_low = col.lower()
+            if 'promo' in c_low or 'promotion' in c_low:
+                col_promo_ligne = col
+                break
+
+        # Affichage transparent des en-têtes critiques détectés pour votre contrôle
+        st.success(f"""
+        ✅ **Colonnes critiques validées pour vos réclamations :**
+        - Clé de commande : **{col_cle_cmd}**
+        - Montant (Col. M) : **{col_montant}**
+        - Promotion (Col. L) : **{col_promo_ligne if col_promo_ligne else '⚠️ Non détectée (laisser vide ou vérifier le nom)'}**
+        """)
+
+        # Recherche des autres colonnes optionnelles
         col_date_fact = next((c for c in df_cmd.columns if 'date' in c.lower() and 'facture' in c.lower()), None)
         col_date_recl = next((c for c in df_cmd.columns if 'réclamée' in c.lower() or 'reclamée' in c.lower()), None)
         col_cle_fact = next((c for c in df_cmd.columns if 'clé' in c.lower() and 'facture' in c.lower()), None)
         col_cred = next((c for c in df_cmd.columns if 'crédit' in c.lower() and 'clé' in c.lower()), None)
         col_date_recl_cred = next((c for c in df_cmd.columns if 'crédit' in c.lower() and 'date' in c.lower()), None)
-        col_promo_ligne = next((c for c in df_cmd.columns if 'promo' in c.lower()), None)
 
         # Nettoyage des types numériques et dates
         df_cmd['__qte_num'] = pd.to_numeric(df_cmd[col_qte], errors='coerce').fillna(0)
@@ -158,7 +176,6 @@ if fichier_upload is not None:
 
         sum_qte_k_group = df_cmd.groupby(group_keys)['__qte_num'].transform('sum')
         
-        # Correction robuste : rattachement temporaire au DataFrame pour éviter le KeyError sur les Séries
         df_cmd['__has_date_rc'] = pd.Series(False, index=df_cmd.index)
         if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
             d_col = df_cmd[col_date_recl_cred]
@@ -282,7 +299,7 @@ if fichier_upload is not None:
         timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
         nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
         
-        st.success(f"Traitement rigoureux terminé avec succès ! ({max_row - 1} lignes traitées)")
+        st.success(f"Traitement rigoureux et transparent terminé avec succès ! ({max_row - 1} lignes traitées)")
         
         if st.download_button(
             label=f"📥 Télécharger le rapport ({nom_fichier})",
