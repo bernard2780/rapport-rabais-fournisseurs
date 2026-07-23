@@ -6,14 +6,14 @@ import numpy as np
 
 # 1. CONFIGURATION DE LA PAGE WEB
 st.set_page_config(page_title="Générateur de Rapport", layout="wide")
-st.title("Générateur de Rapport : Rabais Fournisseurs (Calcul Direct)")
+st.title("Générateur de Rapport : Rabais Fournisseurs")
 st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 
 # 2. BOUTON D'IMPORTATION
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info("Traitement et application complète des 10 règles de suppression en cours...")
+    st.info("Traitement et application des règles en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -29,83 +29,127 @@ if fichier_upload is not None:
             
             max_row = ws_cmd.max_row
             
-            # Analyse préalable des clés pour les règles de doublons et de regroupement
-            cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'] != 'NaT')]['Clé_unique_détail_commande'].dropna())
+            # Indexation et préparation des données de référence
+            cles_reclamees = set(df_cmd[df_cmd['Date_Réclamée'].notnull() & (df_cmd['Date_Réclamée'] != 'NaT') & (df_cmd['Date_Réclamée'].astype(str).str.strip() != '')]['Clé_unique_détail_commande'].dropna())
             cles_facture = set(df_cmd['Clé_unique_détail_facture'].dropna())
             cles_credite = set(df_cmd['Clé_unique_détail_credité'].dropna()) if 'Clé_unique_détail_credité' in df_cmd.columns else set()
             
-            # Application des règles ligne par ligne
+            prod_col = '# Produit' if '# Produit' in df_rabais.columns else df_rabais.columns[1]
+            debut_col = 'Date début' if 'Date début' in df_rabais.columns else [c for c in df_rabais.columns if 'début' in c.lower()][0]
+            fin_col = 'Date échéance' if 'Date échéance' in df_rabais.columns else [c for c in df_rabais.columns if 'échéance' in c.lower() or 'fin' in c.lower()][0]
+            rabais_col = 'Rabais' if 'Rabais' in df_rabais.columns else [c for c in df_rabais.columns if 'rabais' in c.lower()][0]
+            
+            df_rabais[debut_col] = pd.to_datetime(df_rabais[debut_col], errors='coerce')
+            df_rabais[fin_col] = pd.to_datetime(df_rabais[fin_col], errors='coerce')
+            df_cmd['Date_Facture'] = pd.to_datetime(df_cmd['Date_Facture'], errors='coerce')
+            rabais_par_produit = df_rabais.groupby(prod_col)
+            
+            # Boucle de traitement ligne par ligne
             for r in range(2, max_row + 1):
                 idx = r - 2
                 if idx < len(df_cmd):
-                    row_data = df_cmd.loc[idx]
+                    row = df_cmd.loc[idx]
                     
-                    date_reclamee = row_data.get('Date_Réclamée', None)
-                    montant_st = float(row_data.get('Montant_ST', 0)) if pd.notnull(row_data.get('Montant_ST', 0)) else 0
-                    qte = float(row_data.get('Qté_commandée', 0)) if pd.notnull(row_data.get('Qté_commandée', 0)) else 0
-                    code_promo = str(row_data.get('Code_promotion', ''))
-                    cle_cmd = row_data.get('Clé_unique_détail_commande', '')
-                    cle_fact = row_data.get('Clé_unique_détail_facture', '')
-                    cle_cred = row_data.get('Clé_unique_détail_credité', '') if 'Clé_unique_détail_credité' in df_cmd.columns else ''
+                    prod = row.get('No_Produit', None)
+                    date_facture = row.get('Date_Facture', pd.NaT)
+                    qte = float(row.get('Qté_commandée', 0)) if pd.notnull(row.get('Qté_commandée', 0)) else 0
+                    montant_st = float(row.get('Montant_ST', 0)) if pd.notnull(row.get('Montant_ST', 0)) else 0
+                    code_promo = str(row.get('Code_promotion', ''))
+                    cle_cmd = row.get('Clé_unique_détail_commande', '')
+                    cle_fact = row.get('Clé_unique_détail_facture', '')
+                    cle_cred = row.get('Clé_unique_détail_credité', '') if 'Clé_unique_détail_credité' in df_cmd.columns else ''
+                    date_recl = row.get('Date_Réclamée', None)
+                    date_recl_cred = row.get('Date_réclamé_détail_credité', None) if 'Date_réclamé_détail_credité' in df_cmd.columns else None
+                    tolerance = 10
                     
-                    # --- SUPPRIMER #1 --- S'il y a une Date_Réclamée
-                    suppr_1 = "Supprimer" if pd.notnull(date_reclamee) and str(date_reclamee).strip() != "" and str(date_reclamee) != "NaT" else ""
-                    
-                    # --- SUPPRIMER #2 --- Si une Date_Réclamée est trouvée pour cette Clé_unique_détail_commande
+                    # Application des critères de suppression (Colonnes B à M)
+                    suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
                     suppr_2 = "Supprimer" if cle_cmd in cles_reclamees else ""
-                    
-                    # --- SUPPRIMER #3 --- Si la Clé_crédit est trouvée dans Clé_commande (ou vice-versa)
-                    suppr_3 = "Supprimer" if (cle_cred in cles_facture or cle_fact in cles_credite) and (cle_cred != "" or cle_fact != "") else ""
-                    
-                    # --- SUPPRIMER #5 --- Si quantité commandée est négative pour la même clé + produit
+                    suppr_d = "Supprimer" if suppr_2 == "Supprimer" else ""
+                    suppr_3 = "Supprimer" if (cle_cred in cles_facture or cle_fact in cles_credite) and (str(cle_cred) != "" or str(cle_fact) != "") else ""
+                    suppr_4 = "Supprimer" if cle_fact in cles_credite and str(cle_fact) != "" else ""
+                    suppr_g = "Supprimer" if suppr_4 == "Supprimer" else ""
                     suppr_5 = "Supprimer" if qte < 0 else ""
-                    
-                    # --- SUPPRIMER #9 --- Code de promotion commence par "FIL"
+                    suppr_6 = "" 
+                    suppr_7 = ""
+                    suppr_8 = "Supprimer" if qte > 0 and pd.notnull(date_recl_cred) and str(date_recl_cred).strip() != "" and montant_st < 0.99 else ""
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
-                    
-                    # --- SUPPRIMER #10 --- Montant_ST inférieur à 0,99
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
-                    # --- RABAIS TOTAL ---
-                    rabais_total = qte * montant_st
+                    # Calculs financiers et temporels
+                    rabais_entre_2_dates = 0
+                    date_debut_retenue = ""
+                    date_fin_retenue = ""
+                    indicateur_tolerance = 0
                     
-                    # --- SUPPRIMER TOTAL --- Si l'un des critères de suppression est actif
-                    tous_criteres = [suppr_1, suppr_2, suppr_3, suppr_5, suppr_9, suppr_10]
+                    if prod in rabais_par_produit.groups and pd.notnull(date_facture):
+                        sub_df = rabais_par_produit.get_group(prod).copy()
+                        sub_df['crit'] = (sub_df[debut_col] <= date_facture + pd.Timedelta(days=tolerance)) & \
+                                         (sub_df[fin_col] >= date_facture - pd.Timedelta(days=tolerance))
+                        valid_rabais = sub_df[sub_df['crit']].copy()
+                        if not valid_rabais.empty:
+                            valid_rabais['dH'] = (valid_rabais[debut_col] - date_facture).abs()
+                            valid_rabais['dI'] = (valid_rabais[fin_col] - date_facture).abs()
+                            valid_rabais['dist'] = valid_rabais[['dH', 'dI']].min(axis=1)
+                            valid_rabais = valid_rabais.sort_values(by=['dist', debut_col], ascending=[True, False])
+                            best_row = valid_rabais.iloc[0]
+                            
+                            taux_rabais = float(best_row[rabais_col]) if pd.notnull(best_row[rabais_col]) else 0
+                            rabais_entre_2_dates = taux_rabais * qte
+                            date_debut_retenue = best_row[debut_col].strftime('%Y-%m-%d') if pd.notnull(best_row[debut_col]) else ""
+                            date_fin_retenue = best_row[fin_col].strftime('%Y-%m-%d') if pd.notnull(best_row[fin_col]) else ""
+                            
+                            if not ((best_row[debut_col] <= date_facture) and (best_row[fin_col] >= date_facture)):
+                                indicateur_tolerance = 1
+                    
+                    rabais_total = qte * montant_st
+                    ecart = rabais_total - rabais_entre_2_dates
+                    
+                    # Synthèse globale Supprimer total (Colonne A)
+                    tous_criteres = [suppr_1, suppr_2, suppr_d, suppr_3, suppr_4, suppr_g, suppr_5, suppr_6, suppr_7, suppr_8, suppr_9, suppr_10]
                     suppr_total = "Supprimer" if any(c == "Supprimer" for c in tous_criteres) else ""
                     
-                    # Inscription dans les colonnes Excel correspondantes (A à M)
-                    ws_cmd.cell(row=r, column=1).value = suppr_total  # Supprimer total (A)
-                    ws_cmd.cell(row=r, column=2).value = suppr_1      # Supprimer #1 (B)
-                    ws_cmd.cell(row=r, column=3).value = suppr_2      # Supprimer #2 (C)
-                    ws_cmd.cell(row=r, column=5).value = suppr_3      # Supprimer #3 (E)
-                    ws_cmd.cell(row=r, column=8).value = suppr_5      # Supprimer #5 (H)
-                    ws_cmd.cell(row=r, column=12).value = suppr_9     # Supprimer #9 (L)
-                    ws_cmd.cell(row=r, column=13).value = suppr_10    # Supprimer #10 (M)
+                    # Écriture dans le fichier Excel
+                    ws_cmd.cell(row=r, column=1).value = suppr_total
+                    ws_cmd.cell(row=r, column=2).value = suppr_1
+                    ws_cmd.cell(row=r, column=3).value = suppr_2
+                    ws_cmd.cell(row=r, column=4).value = suppr_d
+                    ws_cmd.cell(row=r, column=5).value = suppr_3
+                    ws_cmd.cell(row=r, column=6).value = suppr_4
+                    ws_cmd.cell(row=r, column=7).value = suppr_g
+                    ws_cmd.cell(row=r, column=8).value = suppr_5
+                    ws_cmd.cell(row=r, column=9).value = suppr_6
+                    ws_cmd.cell(row=r, column=10).value = suppr_7
+                    ws_cmd.cell(row=r, column=11).value = suppr_8
+                    ws_cmd.cell(row=r, column=12).value = suppr_9
+                    ws_cmd.cell(row=r, column=13).value = suppr_10
                     
-                    # Rabais total (O / 15)
-                    ws_cmd.cell(row=r, column=15).value = rabais_total 
+                    ws_cmd.cell(row=r, column=15).value = rabais_total
+                    ws_cmd.cell(row=r, column=16).value = rabais_entre_2_dates
+                    ws_cmd.cell(row=r, column=17).value = indicateur_tolerance
+                    ws_cmd.cell(row=r, column=18).value = tolerance
                     
-                    # Tolérance et indicateur
-                    ws_cmd.cell(row=r, column=18).value = 10          # Tolérance (R)
-                    ws_cmd.cell(row=r, column=17).value = 0           # Indicateur de tolérance (Q)
-                    
-                    # Écart (V / 22)
-                    ws_cmd.cell(row=r, column=22).value = rabais_total 
+                    if date_debut_retenue:
+                        ws_cmd.cell(row=r, column=19).value = date_debut_retenue
+                    if date_fin_retenue:
+                        ws_cmd.cell(row=r, column=20).value = date_fin_retenue
+                        
+                    ws_cmd.cell(row=r, column=22).value = ecart
             
             output_buffer = io.BytesIO()
             wb.save(output_buffer)
             output_buffer.seek(0)
             
-            st.success(f"Traitement complet terminé ! {max_row - 1} lignes analysées selon l'ensemble des règles.")
+            st.success(f"Traitement terminé ! {max_row - 1} lignes traitées.")
             
             st.download_button(
-                label="📥 Télécharger le rapport final complet (Excel)",
+                label="📥 Télécharger le rapport final (Excel)",
                 data=output_buffer,
-                file_name="Rapport_Rabais_Final_Calcule.xlsx",
+                file_name="Rapport_Rabais_Final.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
             st.error("Les onglets requis sont introuvables.")
             
     except Exception as e:
-        st.error(f"Une erreur s'est produite lors du traitement : {e}")
+        st.error(f"Une erreur s'est produite : {e}")
