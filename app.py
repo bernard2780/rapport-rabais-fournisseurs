@@ -96,33 +96,13 @@ if fichier_upload is not None:
                 col_n_arr[group[group['_rabais_calc'] == max_r].index] = 1
             df_cmd['_col_N'] = col_n_arr
 
-            # --- PRÉ-CALCULS DES GROUPES (POUR I ET K) ---
-            mask_no_recl = df_cmd['Date_Réclamée'].isnull() | (df_cmd['Date_Réclamée'].astype(str).str.strip() == '') | (df_cmd['Date_Réclamée'].astype(str) == 'NaT')
-            sum_qte_i = df_cmd[mask_no_recl].groupby(['Clé_unique_détail_commande', 'No_Produit'])['Qté_commandée'].transform('sum')
-            max_rab_i = df_cmd[mask_no_recl].groupby(['Clé_unique_détail_commande', 'No_Produit'])['_rabais_calc'].transform('max')
-
-            sum_qte_k = df_cmd.groupby(['Clé_unique_détail_commande', 'No_Produit'])['Qté_commandée'].transform('sum')
-            
-            # Pour la condition 2 (existence d'une date de réclamation crédit dans le groupe)
-            if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
-                has_date_col = df_cmd[col_date_recl_cred].notnull() & (df_cmd[col_date_recl_cred].astype(str).str.strip() != '') & (df_cmd[col_date_recl_cred].astype(str) != 'NaT') & (df_cmd[col_date_recl_cred].astype(str) != 'nan')
-                group_has_date = df_cmd[has_date_col].groupby(['Clé_unique_détail_commande', 'No_Produit']).size().reindex(df_cmd.set_index(['Clé_unique_détail_commande', 'No_Produit']).index, fill_value=0)
-            else:
-                group_has_date = pd.Series(0, index=df_cmd.index)
-
-            # Pour la condition 3 (somme / présence des clés crédit = 0 dans le groupe)
-            if col_cred and col_cred in df_cmd.columns:
-                valid_cred = df_cmd[col_cred].notnull() & (df_cmd[col_cred].astype(str).str.strip() != '') & (df_cmd[col_cred].astype(str) != '0') & (df_cmd[col_cred].astype(str) != 'nan')
-                group_cred_count = df_cmd[valid_cred].groupby(['Clé_unique_détail_commande', 'No_Produit']).size().reindex(df_cmd.set_index(['Clé_unique_détail_commande', 'No_Produit']).index, fill_value=0)
-            else:
-                group_cred_count = pd.Series(0, index=df_cmd.index)
-
-            # --- BOUCLE D'ÉCRITURE LIGNE PAR LIGNE ---
+            # --- BOUCLE D'ÉCRITURE LIGNE PAR LIGNE SÉCURISÉE ---
             for r in range(2, max_row + 1):
                 idx = r - 2
                 if idx < len(df_cmd):
                     row = df_cmd.loc[idx]
                     
+                    prod = row.get('No_Produit', None)
                     qte = row.get('Qté_commandée', 0)
                     montant_st = row.get('Montant_ST', 0)
                     
@@ -148,8 +128,12 @@ if fichier_upload is not None:
                     suppr_6 = ""
                     is_no_recl = (pd.isnull(date_recl) or str(date_recl).strip() == "" or str(date_recl) == "NaT")
                     if is_no_recl:
-                        if sum_qte_i.iloc[idx] >= 0:
-                            if row['_rabais_calc'] < max_rab_i.iloc[idx]:
+                        mask_i = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & \
+                                 (df_cmd['No_Produit'].astype(str) == str(prod)) & \
+                                 (df_cmd['Date_Réclamée'].isnull() | (df_cmd['Date_Réclamée'].astype(str).str.strip() == ""))
+                        sub_i = df_cmd[mask_i]
+                        if not sub_i.empty and sub_i['Qté_commandée'].sum() >= 0:
+                            if row['_rabais_calc'] < sub_i['_rabais_calc'].max():
                                 suppr_6 = "Supprimer"
                     
                     # Colonne J (Supprimer #7)
@@ -165,15 +149,31 @@ if fichier_upload is not None:
                             if pd.notnull(row.get('Clé_unique_détail_facture')) and row.get('Clé_unique_détail_facture') < max_facture:
                                 suppr_7 = "Supprimer"
 
-                    # --- COLONNE K (Supprimer #8 - Basé sur les SOMME.SI.ENS du groupe) ---
+                    # --- COLONNE K (Supprimer #8 - SOMME.SI.ENS sécurisé) ---
                     suppr_8 = ""
-                    cond1_qte_nette = (sum_qte_k.iloc[idx] > 0)
-                    cond2_date_recl = (group_has_date.iloc[idx] > 0)
-                    cond3_cle_absent = (group_cred_count.iloc[idx] == 0)
-                    cond4_montant = (montant_st < 0.99)
+                    mask_k = (df_cmd['Clé_unique_détail_commande'].astype(str) == cle_cmd) & (df_cmd['No_Produit'].astype(str) == str(prod))
+                    sub_k = df_cmd[mask_k]
                     
-                    if cond1_qte_nette and cond2_date_recl and cond3_cle_absent and cond4_montant:
-                        suppr_8 = "Supprimer"
+                    if not sub_k.empty:
+                        cond1_qte_nette = (sub_k['Qté_commandée'].sum() > 0)
+                        
+                        if col_date_recl_cred and col_date_recl_cred in df_cmd.columns:
+                            d_rc = sub_k[col_date_recl_cred]
+                            cond2_date_recl = (d_rc.notnull() & (d_rc.astype(str).str.strip() != "") & (d_rc.astype(str) != "NaT") & (d_rc.astype(str) != "nan")).any()
+                        else:
+                            cond2_date_recl = False
+                            
+                        if col_cred and col_cred in df_cmd.columns:
+                            c_cr = sub_k[col_cred]
+                            valid_c = c_cr.notnull() & (c_cr.astype(str).str.strip() != "") & (c_cr.astype(str) != "0") & (c_cr.astype(str) != "nan")
+                            cond3_cle_absent = (valid_c.sum() == 0)
+                        else:
+                            cond3_cle_absent = True
+                            
+                        cond4_montant = (montant_st < 0.99)
+                        
+                        if cond1_qte_nette and cond2_date_recl and cond3_cle_absent and cond4_montant:
+                            suppr_8 = "Supprimer"
 
                     suppr_9 = "Supprimer" if code_promo.upper().startswith("FIL") else ""
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
