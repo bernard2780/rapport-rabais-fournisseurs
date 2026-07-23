@@ -23,7 +23,7 @@ st.write("Veuillez téléverser votre fichier d'inventaire brut ci-dessous.")
 fichier_upload = st.file_uploader("Choisissez le fichier de commandes (.xlsx)", type=["xlsx"])
 
 if fichier_upload is not None:
-    st.info(f"Traitement instantané en cours...")
+    st.info(f"Traitement rigoureux et complet (Version {st.session_state.version_compteur}) en cours...")
     
     try:
         wb = openpyxl.load_workbook(fichier_upload, data_only=False)
@@ -131,7 +131,7 @@ if fichier_upload is not None:
                 if pd.notnull(val_h) and pd.notnull(val_i):
                     rabais_lookup[f"{val_h.strftime('%Y-%m-%d')}{val_i.strftime('%Y-%m-%d')}{val_b}"] = val_l
 
-            # --- 4. ENSEMBLES GLOBAUX ---
+            # --- 4. ENSEMBLES ET PRÉ-CALCULS POUR COLONNES I et J ---
             series_date_recl = df_cmd[col_date_recl] if col_date_recl and col_date_recl in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_reclamees = set(df_cmd[series_date_recl.notnull() & (series_date_recl.astype(str).str.strip() != '') & (series_date_recl.astype(str) != 'NaT')][col_cle_cmd].dropna().astype(str))
             
@@ -141,7 +141,21 @@ if fichier_upload is not None:
             series_cred = df_cmd[col_cred] if col_cred and col_cred in df_cmd.columns else pd.Series(np.nan, index=df_cmd.index)
             cles_credite = set(series_cred.dropna().astype(str))
 
-            # --- 5. ÉCRITURE PAR LOTS RAPIDE DANS OPENPYXL ---
+            # Pré-calculs pour Col I (Supprimer #6)
+            is_no_recl_mask = series_date_recl.isnull() | (series_date_recl.astype(str).str.strip() == "") | (series_date_recl.astype(str) == "NaT")
+            df_cmd['_temp_i_rab'] = np.where(is_no_recl_mask, df_cmd['_rabais_calc'], -np.inf)
+            group_i_keys = [col_cle_cmd, col_produit]
+            max_rab_i_group = df_cmd.groupby(group_i_keys)['_temp_i_rab'].transform('max')
+            sum_qte_i_group = df_cmd.groupby(group_i_keys)['__qte_num'].transform('sum')
+
+            # Pré-calculs pour Col J (Supprimer #7)
+            max_fact_n1_filled = pd.Series(np.nan, index=df_cmd.index)
+            if col_cle_fact and col_cle_fact in df_cmd.columns:
+                n1_mask = df_cmd['_col_N'] == 1
+                df_cmd['_max_fact_n1'] = np.where(n1_mask, df_cmd[col_cle_fact], np.nan)
+                max_fact_n1_filled = df_cmd.groupby(col_cle_cmd)['_max_fact_n1'].transform('max')
+
+            # --- 5. ÉCRITURE DANS OPENPYXL ---
             for r in range(2, max_row + 1):
                 idx = r - 2
                 if idx < len(df_cmd):
@@ -165,24 +179,51 @@ if fichier_upload is not None:
                     cle_cred_val = str(row.get(col_cred, '')) if col_cred and pd.notnull(row.get(col_cred, '')) else ''
                     date_recl = row.get(col_date_recl, None) if col_date_recl else None
                     
+                    # Règle 1 (Col B)
                     suppr_1 = "Supprimer" if pd.notnull(date_recl) and str(date_recl).strip() != "" and str(date_recl) != "NaT" else ""
+                    
+                    # Règle 2 / Col C
                     val_col_c = cle_cmd if (cle_cmd in cles_reclamees and cle_cmd != "") else ""
                     suppr_d = "Supprimer" if val_col_c != "" else ""
                     
+                    # Règle 3 / Col E
                     cond_suppr_3 = ((cle_cred_val in cles_facture and cle_cred_val != '' and cle_cred_val != 'nan') or 
                                      (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan'))
                     suppr_3 = "Supprimer" if cond_suppr_3 else ""
                     
+                    # Règle 4 / Col F & G
                     cond_credit_remplie = (cle_fact in cles_credite and cle_fact != '' and cle_fact != 'nan')
                     val_col_f = cle_cmd if cond_credit_remplie else ""
                     suppr_g = "Supprimer" if val_col_f != "" else ""
                     
+                    # Règle 5 / Col H
                     suppr_5 = "Supprimer" if qte < 0 else ""
-                    suppr_6 = ""
-                    suppr_7 = ""
-                    suppr_8 = ""
                     
+                    # --- COLONNE I (Supprimer #6) ---
+                    suppr_6 = ""
+                    is_no_recl = (pd.isnull(date_recl) or str(date_recl).strip() == "" or str(date_recl) == "NaT")
+                    if is_no_recl:
+                        if sum_qte_i_group.iloc[idx] >= 0:
+                            if row['_rabais_calc'] < max_rab_i_group.iloc[idx]:
+                                suppr_6 = "Supprimer"
+                    
+                    # --- COLONNE J (Supprimer #7) ---
+                    suppr_7 = ""
+                    val_n = row['_col_N']
+                    if val_n == 0:
+                        suppr_7 = "Supprimer"
+                    else:
+                        m_f = max_fact_n1_filled.iloc[idx]
+                        if col_cle_fact and pd.notnull(row.get(col_cle_fact)) and pd.notnull(m_f) and row.get(col_cle_fact) < m_f:
+                            suppr_7 = "Supprimer"
+
+                    # Règle 8 / Col K
+                    suppr_8 = ""
+
+                    # Règle 9 / Col L
                     suppr_9 = "Supprimer" if code_promo_str.upper().startswith("FIL") else ""
+
+                    # Règle 10 / Col M
                     suppr_10 = "Supprimer" if montant_st < 0.99 else ""
                     
                     rabais_entre_2_dates = row['_rabais_calc']
@@ -225,7 +266,7 @@ if fichier_upload is not None:
             timestamp_str = datetime.now(ZoneInfo("America/Montreal")).strftime("%Y%m%d_%H%M")
             nom_fichier = f"Rapport_Rabais_Final_v{st.session_state.version_compteur}_{timestamp_str}.xlsx"
             
-            st.success(f"Traitement instantané réussi ! ({max_row - 1} lignes traitées)")
+            st.success(f"Traitement terminé avec succès ! ({max_row - 1} lignes traitées)")
             
             if st.download_button(
                 label=f"📥 Télécharger le rapport ({nom_fichier})",
